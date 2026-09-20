@@ -373,7 +373,7 @@ def _build_renderable():
             show_header=False,
             show_edge=False,
             box=None,
-            padding=(0, 1),
+            padding=(0, 0),
             expand=True,
         )
         t.add_column(ratio=1, justify="left", overflow="ellipsis", no_wrap=True)
@@ -581,6 +581,16 @@ def finish_progress(item_id: int, name: str, color: str = "green"):
 
     if not any(p.bar_kind == "spinner" for p in _active.values()):
         _stop_tick()
+    _render(force=True)
+
+
+def finish_duplicate(item_id: int, name: str):
+    """Añade un item ya descargado a la secuencia, sin consultar la red."""
+    with _lock:
+        _active.pop(item_id, None)
+        _completed[item_id] = (icon("dup").strip() or "~", name, "dim")
+        if item_id not in _display_order:
+            _display_order.append(item_id)
     _render(force=True)
 
 

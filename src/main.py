@@ -9,6 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 import pyperclip
 import requests
 
+# Permite ejecutar desde la raíz del proyecto ('make run', 'python -m src.main')
+# resolviendo los módulos internos que viven dentro de esta carpeta.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import display
 from config import Config, load_history, save_history, load_session, save_session
 from session import TSRSession

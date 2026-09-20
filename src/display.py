@@ -388,7 +388,8 @@ def _build_renderable():
             for ic, name, style in _completed:
                 if remaining <= 0:
                     break
-                t.add_row(Text(name, style=style), Text(ic, style=style))
+                # Completado: icono a la izquierda reemplaza al de descarga
+                t.add_row(Text(f"{ic} {name}", style=style), "")
                 remaining -= 1
 
         parts.append(t)

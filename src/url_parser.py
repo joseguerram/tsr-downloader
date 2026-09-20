@@ -6,16 +6,18 @@ logger = logging.getLogger(__name__)
 
 DETAILS_URL = "https://www.thesimsresource.com/downloads/details/id/"
 
-# Un único patrón que cubre todos los formatos de URL de TSR:
-#   /download/download/itemId/123
-#   /downloads/details/[categoría/...]/id/123
-#   /downloads/123            (URL corta, ID al final o seguido de barra)
+# Patrón genérico: acepta cualquier URL de TSR que contenga el ID del item,
+# sin importar los prefijos (categorías, autor, versiones...):
+#   /downloads/download/itemId/123            -> descarga directa
+#   /members/<autor>/downloads/details/.../id/123  -> detalle con prefijo arbitrario
+#   /downloads/details/.../id/123             -> detalle clásico
+#   /downloads/123 o /downloads/123?ref=...   -> URL corta
 _PATTERN = re.compile(
     r"www\.thesimsresource\.com"
     r"(?:"
-    r"/downloads/download/itemId/(\d+)"       # group(1): /download/itemId/123
-    r"|/downloads/details/(?:.*/)?id/(\d+)"   # group(2): /details/.../id/123
-    r"|/downloads/(\d+)(?:[/?#]|$)"           # group(3): /downloads/123
+    r"/downloads/download/itemId/(\d+)"     # group(1): descarga directa
+    r"|.*?/id/(\d+)"                        # group(2): detalle con cualquier prefijo
+    r"|/downloads/(\d+)(?:[/?#]|$)"         # group(3): url corta
     r")",
     re.IGNORECASE,
 )
@@ -80,6 +82,9 @@ if __name__ == "__main__":
         ("https://www.thesimsresource.com/downloads/download/itemId/1782277", 1782277),
         ("https://www.thesimsresource.com/downloads/download/itemId/1782277/ticket/tsr123/", 1782277),
         ("https://www.thesimsresource.com/downloads/1782277/some/extra/path", 1782277),
+        # URL con prefijo de miembro (autor) que antes fallaba
+        ("https://www.thesimsresource.com/members/McLayneSims/downloads/details/category/sims4-clothing-male-teenadultelder-everyday/title/boi-trash-hoodies/id/1497492/", 1497492),
+        ("https://www.thesimsresource.com/members/McLayneSims/downloads/details/id/1497492/", 1497492),
         # URL sin www
         ("https://thesimsresource.com/downloads/1782277", None),
         # URL de otro dominio

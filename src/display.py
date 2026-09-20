@@ -39,7 +39,6 @@ _lock = threading.RLock()
 _status = ""
 _log: deque = deque(maxlen=200)
 _active: dict[int, "_Progress"] = {}
-_completed: deque = deque(maxlen=3)      # fila compacta: máximo 3
 _session_ok = 0
 _session_failed = 0
 _member_info = ""
@@ -312,20 +311,6 @@ def _emit(text: str, end: str = "\n"):
     sys.stdout.flush()
 
 
-def _wrap_chunks(chunks: list[str], width: int) -> list[str]:
-    rows: list[str] = []
-    current = ""
-    for chunk in chunks:
-        if current and len(current) + len(chunk) + 1 > width:
-            rows.append(current)
-            current = chunk
-        else:
-            current = (current + " " + chunk) if current else chunk
-    if current:
-        rows.append(current)
-    return rows
-
-
 # ── Marco ─────────────────────────────────────────────────────────────
 
 def _get_bar_text(p: "_Progress", width: int) -> str:
@@ -361,14 +346,7 @@ def _build_frame() -> list:
     if _flash and time.monotonic() < _flash_until:
         lines.append(_paint(_fit(_flash, w - 1), _COLOR_MAP.get(_flash_color, _GREEN)))
 
-    # ── 2. Completados recientes (fila fija, wrap horizontal) ────────
-    if _completed:
-        chunks = [_fit(f"{ic} {name}", 26) for ic, name, _ in list(_completed)[::-1]]
-        wrapped = _wrap_chunks(chunks, max(40, w - 4))
-        for row in wrapped[:2]:
-            lines.append(_paint(_fit(row, w - 1), _GRAY))
-
-    # ── 3. Separador (si hay activos) ───────────────────────────────
+    # ── 2. Separador (si hay activos) ───────────────────────────────
     if active_items:
         lines.append(_paint("━" * max(1, min(w - 1, 62)), _GRAY))
 
@@ -566,7 +544,6 @@ def finish_progress(item_id: int, name: str, color: str = "green"):
         _active.pop(item_id, None)
         c = _COLOR_MAP.get(color, _GREEN)
         ic = icon("error") if color == "red" else icon("ok")
-        _completed.append((ic.strip() or "·", name, c))
 
         if not _UI:
             if _plain_cr:

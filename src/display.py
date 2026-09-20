@@ -16,6 +16,7 @@ from collections import deque
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Rule, Static
+from rich.text import Text
 
 
 _SPINNERS = ["◜", "◝", "◞", "◟"]
@@ -101,19 +102,24 @@ class DownloadRow(Horizontal):
 
     def update_row(self, label: str, state: str, style: str = "bold", done: bool = False):
         self._label, self._state, self._style = label, state, style
-        self.query_one(".row-label", Static).update(label)
+        self.query_one(".row-label", Static).update(Text(label, style=style))
         state_widget = self.query_one(".row-state", Static)
-        state_widget.update(state)
+        state_widget.update(Text(state, style="cyan" if state and not state.startswith("SPINNER:") else "magenta"))
 
 
 class TSRApp(App[None]):
     CSS = """
-    Screen { background: $surface; }
+    Screen { background: #000000; color: #d0d0d0; }
     #identity { height: 1; color: #ff69b4; text-style: bold; }
     #status { height: 1; color: cyan; text-style: bold; }
     #messages { height: auto; max-height: 3; color: $text-muted; }
     #downloads { height: 1fr; width: 100%; scrollbar-size: 1 1; }
     #separator { height: 1; color: $text-muted; }
+    .green { color: green; }
+    .red { color: red; }
+    .yellow { color: yellow; }
+    .cyan { color: cyan; }
+    .dim { color: #888888; }
     """
 
     def compose(self) -> ComposeResult:
@@ -196,7 +202,7 @@ def run(worker):
             worker()
         finally:
             try:
-                app.exit()
+                _app.exit()
             except Exception:
                 pass
 
@@ -283,7 +289,7 @@ class _Progress:
 
 def _update_active_row(progress: _Progress):
     state = progress.bar if progress.bar_kind == "bar" else "SPINNER:" + (f"  {progress.message_text}" if progress.message_text else "")
-    row = _rows.get(progress.row_key)
+    row = progress.row
     if row:
         _call(row.update_row, progress.label or " ", state, "bold")
 

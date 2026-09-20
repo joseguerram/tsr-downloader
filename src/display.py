@@ -360,6 +360,11 @@ def _build_renderable():
     if _status:
         parts.append(Text(_fit(_status, w - 1), style="bold cyan"))
 
+    # Los avisos del sistema van antes de las descargas; así no parecen
+    # filas nuevas mezcladas con el orden permanente de los items.
+    for text, color in msgs:
+        parts.append(Text(_fit(text, w - 1), style=(_STYLES.get(color) or "dim")))
+
     # ── 2. Tabla con separador, activos y completados ────────────────
     if _active or _completed or msgs:
         parts.append(Text("━" * min(w - 4, 62), style="dim"))
@@ -374,8 +379,7 @@ def _build_renderable():
         t.add_column(ratio=1, justify="left", overflow="ellipsis", no_wrap=True)
         t.add_column(justify="right", overflow="ellipsis", no_wrap=True)
 
-        # Los avisos se reservan abajo: el feedback gana a las filas.
-        remaining = h - 1 - len(parts) - len(msgs)
+        remaining = h - 1 - len(parts)
         if remaining > 0:
             # Una sola secuencia: cada fila conserva su posición original.
             # Solo cambia su contenido al pasar de spinner a barra y a ✓/✗.
@@ -402,10 +406,6 @@ def _build_renderable():
                 remaining -= 1
 
         parts.append(t)
-
-    # ── 3. Avisos recientes (feedback al pie, atenuado) ──────────────
-    for text, color in msgs:
-        parts.append(Text(_fit(text, w - 1), style=(_STYLES.get(color) or "dim")))
 
     if not parts:
         return Text("")

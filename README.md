@@ -46,25 +46,21 @@ Luego edita `config.json` (en la raíz del proyecto):
 
 ## Instalación
 
-### Windows
-
-```
-setup.bat
-start.bat
+```sh
+make setup    # crea el venv, instala dependencias y genera config.json si falta
 ```
 
-### Linux / Mac
+`make setup` crea `config.json` a partir de `config.json.example` automáticamente si no existe. Después edítalo con tu cuenta y ejecuta:
 
 ```sh
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m src.main
+make run      # ejecuta la aplicación
 ```
+
+En Windows nativo usa **Git Bash** o **WSL** para que `make` esté disponible.
 
 ## Uso
 
-1. Ejecuta `start.bat` (o `python -m src.main`).
+1. Ejecuta `make run`.
 2. Abre The Sims Resource en el navegador.
 3. Copia enlaces de descarga.
 4. Los archivos se descargan solos.
@@ -82,11 +78,11 @@ tsr-downloader/
 │   ├── url_parser.py    ← Análisis y validación de URL
 │   ├── config.py        ← Rutas y carga de la configuración
 │   └── display.py       ← Interfaz de consola (colores y progreso)
+├── Makefile             ← make setup / make run / make clean / make help
 ├── config.json.example  ← Plantilla de configuración (se sube a Git)
 ├── .gitignore
 ├── .venv/
 ├── requirements.txt
-├── setup.bat / start.bat
 └── README.md
 ```
 

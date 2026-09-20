@@ -105,21 +105,51 @@ class DownloadRow(Horizontal):
         self.query_one(".row-label", Static).update(Text(label, style=style))
         state_widget = self.query_one(".row-state", Static)
         state_widget.update(Text(state, style="cyan" if state and not state.startswith("SPINNER:") else "magenta"))
+        if done:
+            self.add_class("done")
+        else:
+            self.remove_class("done")
 
 
 class TSRApp(App[None]):
     CSS = """
-    Screen { background: #000000; color: #d0d0d0; }
-    #identity { height: 1; color: #ff69b4; text-style: bold; }
-    #status { height: 1; color: cyan; text-style: bold; }
-    #messages { height: auto; max-height: 3; color: $text-muted; }
-    #downloads { height: 1fr; width: 100%; scrollbar-size: 1 1; }
-    #separator { height: 1; color: $text-muted; }
-    .green { color: green; }
-    .red { color: red; }
-    .yellow { color: yellow; }
-    .cyan { color: cyan; }
-    .dim { color: #888888; }
+    Screen { background: #080b16; color: #c8d0e0; }
+    #identity {
+        height: 1;
+        background: #130b24;
+        color: #ff4fd8;
+        text-style: bold;
+        padding: 0 1;
+    }
+    #status {
+        height: 1;
+        background: #091b2a;
+        color: #00e5ff;
+        text-style: bold;
+        padding: 0 1;
+    }
+    #messages {
+        height: auto;
+        max-height: 4;
+        color: #8792aa;
+        padding: 0 1;
+        border-left: solid #553b78;
+    }
+    #downloads {
+        height: 1fr;
+        width: 100%;
+        padding: 0 1;
+        border: round #263b5c;
+        scrollbar-size: 1 1;
+        scrollbar-color: #2d7890;
+        scrollbar-background: #0b1222;
+    }
+    #separator { height: 1; color: #b638a9; }
+    .green { color: #62ff9b; }
+    .red { color: #ff5370; }
+    .yellow { color: #ffe66d; }
+    .cyan { color: #00e5ff; }
+    .dim { color: #8892a8; }
     """
 
     def compose(self) -> ComposeResult:
@@ -150,7 +180,12 @@ class TSRApp(App[None]):
                     pass
 
     def set_identity(self, text: str) -> None:
-        self.query_one("#identity", Static).update(text)
+        title, separator, member = text.partition(" · ")
+        rendered = Text(title, style="#ff4fd8")
+        if separator:
+            rendered.append(" · ", style="#8d75a8")
+            rendered.append(member, style="#00e5ff")
+        self.query_one("#identity", Static).update(rendered)
 
     def set_status(self, text: str) -> None:
         self.query_one("#status", Static).update(text)

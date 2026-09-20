@@ -242,7 +242,7 @@ def process_url(text: str):
 
 # ── Main Loop ─────────────────────────────────────────────────────────
 
-def main():
+def _run_worker():
     global history, last_clip, _total_files, _last_file
 
     os.makedirs(config.download_directory, exist_ok=True)
@@ -293,6 +293,10 @@ def main():
     finally:
         executor.shutdown(wait=False)
         display.shutdown(_session_ok, _session_failed, _last_file)
+
+
+def main():
+    display.run(_run_worker)
 
 
 if __name__ == "__main__":

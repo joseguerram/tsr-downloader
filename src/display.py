@@ -1,272 +1,57 @@
-"""Capa de visualización para la consola de TSR Downloader (Rich).
+"""Interfaz de terminal de TSR Downloader basada en Textual.
 
-Renderiza un marco vivo con Rich (Live + Table): barra de estado superior,
-descargas activas con el nombre fijo a la izquierda y barra de progreso /
-spinner / icono de resultado a la derecha, y los completados al pie con su
-icono alineado a la derecha.
-
-El ancho del área derecha es permanente: solo cambia su contenido
-(spinner → barra → ✓/✗). En terminales sin TTY degrada a texto plano.
+La capa conserva una API sencilla para que la lógica de descargas pueda
+actualizar la interfaz desde sus hilos de trabajo.
 """
 
+from __future__ import annotations
+
 import os
-import sys
-import time
 import shutil
+import sys
 import threading
+import time
 from collections import deque
 
-from rich.console import Console, Group
-from rich.live import Live
-from rich.table import Table
-from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, VerticalScroll
+from textual.widgets import Rule, Static
 
-# ── Secuencias ANSI (modo texto plano, sin TTY) ────────────────────────
-_RESET = "\033[0m"
-_BOLD = "\033[1m"
-_DIM = "\033[2m"
-_RED = "\033[31m"
-_GREEN = "\033[32m"
-_YELLOW = "\033[33m"
-_CYAN = "\033[36m"
-_GRAY = "\033[90m"
 
-# ── Estilos para Rich (nombres → estilos declarativos) ─────────────────
-_STYLES = {
-    "green": "green",
-    "red": "red",
-    "yellow": "yellow",
-    "cyan": "cyan",
-    "gray": "dim",
-}
-_ANSI = {
-    "green": _GREEN,
-    "red": _RED,
-    "yellow": _YELLOW,
-    "cyan": _CYAN,
-    "gray": _GRAY,
-}
-
-# ── Animación spinner (giratorio, distinto a la barra) ─────────────────
 _SPINNERS = ["◜", "◝", "◞", "◟"]
+_ICON_SETS = {
+    "download": ("↓", "↓", " "),
+    "ok": ("✓", "✓", "✓"),
+    "error": ("✗", "✗", "✗"),
+    "queue": ("…", "…", ">"),
+    "vip": ("■", "■", "!"),
+    "dup": ("~", "~", "-"),
+    "new": ("+", "+", "+"),
+}
 
-# ── Estado global ──────────────────────────────────────────────────────
+_STYLES = {"green": "green", "red": "red", "yellow": "yellow", "cyan": "cyan", "gray": "dim"}
+_ANSI = {"green": "\033[32m", "red": "\033[31m", "yellow": "\033[33m", "cyan": "\033[36m", "gray": "\033[90m"}
+_RESET = "\033[0m"
+
 _UI = False
 _COLORS = True
 _mode = "unicode"
-_console: Console | None = None
-_live: Live | None = None
-_live_active = False
-
+_app: "TSRApp | None" = None
+_app_ready = threading.Event()
 _lock = threading.RLock()
-
+_log: deque[tuple[str, str]] = deque(maxlen=3)
+_rows: dict[object, "DownloadRow"] = {}
+_order: list[object] = []
 _status = ""
-_log: deque = deque(maxlen=200)
-_active: dict[int, "_Progress"] = {}
-_completed: dict[object, tuple[str, str, str]] = {}  # fila → (icono, nombre, estilo)
-_display_order: list[object] = []             # orden permanente de las filas
-_session_ok = 0
-_session_failed = 0
 _member_info = ""
 _total_files = 0
-_plain_cr = False                          # modo plano: barra impresa con \r
-
-_ICON_SETS = {
-    "download": ("\uf019", "↓", " "),
-    "ok":       ("\uf00c", "✓", "✓"),
-    "error":    ("\uf00d", "✗", "✗"),
-    "queue":    ("\uf017", "…", ">"),
-    "vip":      ("\uf023", "■", "!"),
-    "dup":      ("\uf0c7", "~", "-"),
-    "new":      ("\uf067", "+", "+"),
-}
-
-
-# ── Detección de Nerd Font ────────────────────────────────────────────
-
-def _nerd_font_windows() -> bool:
-    if os.name != "nt":
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
-        kernel32 = ctypes.windll.kernel32
-
-        class COORD(ctypes.Structure):
-            _fields_ = [("X", wintypes.SHORT), ("Y", wintypes.SHORT)]
-
-        class CONSOLE_FONT_INFOEX(ctypes.Structure):
-            _fields_ = [
-                ("cbSize", wintypes.ULONG),
-                ("nFont", wintypes.ULONG),
-                ("dwFontSize", COORD),
-                ("FontFamily", wintypes.UINT),
-                ("FontWeight", wintypes.UINT),
-                ("FaceName", wintypes.WCHAR * 32),
-            ]
-
-        kernel32.GetCurrentConsoleFontEx.argtypes = [
-            wintypes.HANDLE, wintypes.BOOL,
-            ctypes.POINTER(CONSOLE_FONT_INFOEX),
-        ]
-        kernel32.GetCurrentConsoleFontEx.restype = wintypes.BOOL
-
-        h = kernel32.GetStdHandle(-11)
-        info = CONSOLE_FONT_INFOEX()
-        info.cbSize = ctypes.sizeof(CONSOLE_FONT_INFOEX)
-        if kernel32.GetCurrentConsoleFontEx(h, False, ctypes.byref(info)):
-            return "nerd" in info.FaceName.lower()
-    except Exception:
-        pass
-    return False
-
-
-def _probe_glyph(stdin_fd: int, stdout_fd: int, glyph: str) -> bool:
-    import select
-    os.write(stdout_fd, b"\033[s")
-    os.write(stdout_fd, b"\033[1G")
-    os.write(stdout_fd, glyph.encode("utf-8", "replace"))
-    os.write(stdout_fd, b"\033[6n")
-
-    resp = b""
-    while len(resp) < 32:
-        ready, _, _ = select.select([stdin_fd], [], [], 0.3)
-        if not ready:
-            return False
-        chunk = os.read(stdin_fd, 1)
-        if not chunk:
-            return False
-        resp += chunk
-        if resp.endswith(b"R"):
-            break
-
-    text = resp.decode("ascii", "ignore")
-    if "[" not in text or ";" not in text:
-        return False
-    try:
-        col = int(text.split("[")[-1].rstrip("R").split(";")[1])
-    except ValueError:
-        return False
-    return col == 2
-
-
-def _nerd_font_probe() -> bool:
-    if os.name != "posix":
-        return False
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        return False
-    try:
-        import termios, tty
-        stdin_fd = sys.stdin.fileno()
-        stdout_fd = sys.stdout.fileno()
-        attrs = termios.tcgetattr(stdin_fd)
-    except Exception:
-        return False
-
-    try:
-        tty.setraw(stdin_fd)
-        ok = (_probe_glyph(stdin_fd, stdout_fd, "\ue0b0")
-              and _probe_glyph(stdin_fd, stdout_fd, "\uf019"))
-        return ok
-    except Exception:
-        return False
-    finally:
-        try:
-            os.write(sys.stdout.fileno(), b"\033[u\033[K")
-        except Exception:
-            pass
-        try:
-            termios.tcsetattr(stdin_fd, termios.TCSADRAIN, attrs)
-        except Exception:
-            pass
-
-
-# ── Soporte de color en Windows ───────────────────────────────────────
-
-def _enable_windows_vt() -> bool:
-    if os.name != "nt":
-        return True
-    try:
-        import ctypes
-        from ctypes import wintypes
-        kernel32 = ctypes.windll.kernel32
-        kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-        kernel32.GetConsoleMode.restype = wintypes.BOOL
-        kernel32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-        kernel32.SetConsoleMode.restype = wintypes.BOOL
-
-        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
-        ok = True
-        for std in (-11, -12):
-            h = kernel32.GetStdHandle(std)
-            mode = wintypes.DWORD()
-            if kernel32.GetConsoleMode(h, ctypes.byref(mode)):
-                if not (mode.value & ENABLE_VIRTUAL_TERMINAL_PROCESSING):
-                    kernel32.SetConsoleMode(h, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
-            else:
-                ok = False
-        return ok
-    except Exception:
-        return False
-
-
-# ── Inicialización ────────────────────────────────────────────────────
-
-def init(nerd_requested: bool = True):
-    global _UI, _COLORS, _mode, _console, _live
-
-    is_tty = sys.stdout.isatty()
-    _COLORS = is_tty
-    if is_tty:
-        if os.name == "nt":
-            _enable_windows_vt()
-        _UI = True
-    else:
-        _UI = False
-
-    if nerd_requested:
-        if _nerd_font_windows() or _nerd_font_probe():
-            _mode = "nerd"
-        else:
-            _mode = "unicode"
-    else:
-        _mode = "none"
-
-    _console = Console(highlight=False)
-    if _UI:
-        _live = Live(
-            console=_console,
-            screen=False,
-            auto_refresh=False,
-            vertical_overflow="visible",
-        )
+_session_ok = 0
+_session_failed = 0
+_plain_cr = False
 
 
 def icon(name: str) -> str:
-    nerd, uni, none = _ICON_SETS[name]
-    if _mode == "nerd":
-        return nerd
-    if _mode == "unicode":
-        return uni
-    return none
-
-
-# ── Utilidades de texto ───────────────────────────────────────────────
-
-def _paint(text: str, color: str) -> str:
-    if not _COLORS or not color:
-        return text
-    return f"{color}{text}{_RESET}"
-
-
-def _emit(text: str, end: str = "\n"):
-    sys.stdout.write(text + end)
-    sys.stdout.flush()
-
-
-def _spin_glyph() -> str:
-    """Glifo del spinner según el tiempo (anima sin temporizador por frame)."""
-    return _SPINNERS[int(time.monotonic() * 3) % len(_SPINNERS)]
+    return _ICON_SETS[name][0 if _mode == "nerd" else 1 if _mode == "unicode" else 2]
 
 
 def format_bytes(n: float) -> str:
@@ -275,6 +60,7 @@ def format_bytes(n: float) -> str:
         if n < 1024 or unit == "TB":
             return f"{int(n)} B" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1024
+    return f"{n:.1f} TB"
 
 
 def format_speed(bps: float) -> str:
@@ -285,9 +71,7 @@ def format_eta(seconds: float | None) -> str:
     if seconds is None:
         return ""
     seconds = int(seconds)
-    if seconds < 60:
-        return f"{seconds}s"
-    return f"{seconds // 60}m {seconds % 60}s"
+    return f"{seconds}s" if seconds < 60 else f"{seconds // 60}m {seconds % 60}s"
 
 
 def build_bar(pct: float, width: int = 24) -> str:
@@ -296,325 +80,259 @@ def build_bar(pct: float, width: int = 24) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
-# ── Animación spinner (temporizador solo mientras haya spinners) ──────
+class DownloadRow(Horizontal):
+    """Una fila permanente: solo cambia su contenido, nunca su posición."""
 
-_tick_timer: threading.Timer | None = None
-
-
-def _start_tick():
-    """Arranca el temporizador que re-renderiza mientras haya spinners."""
-    global _tick_timer
-    if _tick_timer is not None:
-        return
-
-    def _do_tick():
-        global _tick_timer
-        if any(p.bar_kind == "spinner" for p in _active.values()):
-            _render(force=True)
-            _tick_timer = threading.Timer(0.35, _do_tick)
-            _tick_timer.daemon = True
-            _tick_timer.start()
-        else:
-            _tick_timer = None
-
-    _tick_timer = threading.Timer(0.35, _do_tick)
-    _tick_timer.daemon = True
-    _tick_timer.start()
-
-
-def _stop_tick():
-    global _tick_timer
-    _tick_timer = None
-
-
-# ── Marco ─────────────────────────────────────────────────────────────
-
-_last_render = 0.0
-
-
-def _fit(text: str, width: int) -> str:
-    """Recorta un texto añadiendo '…' si excede el ancho (ancho fijo)."""
-    if width <= 0:
-        return ""
-    if len(text) <= width:
-        return text
-    return text[: width - 1] + "…"
-
-
-def _build_renderable():
-    """Compone el marco completo: estado, separador, activos, completados y
-    avisos recientes al pie.
-
-    Estado y separador van a ancho completo; los activos/completados viven
-    en una tabla de dos columnas (nombre a la izquierda, barra o icono a la
-    derecha). Los avisos se reservan espacio abajo para dar feedback
-    inmediato al copiar una URL. Devuelve algo renderizable (Group/Text).
+    DEFAULT_CSS = """
+    DownloadRow { height: 1; width: 100%; }
+    DownloadRow .row-label { width: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }
+    DownloadRow .row-state { width: 52; content-align: right middle; text-wrap: nowrap; text-overflow: ellipsis; }
+    DownloadRow.done .row-state { width: 0; }
     """
-    w = _console.width if _console is not None else 80
-    h = _console.height if _console is not None else 24
 
-    msgs = list(_log)[-3:] if _log else []
-    parts = []
+    def __init__(self, key: object, label: str, state: str = "", style: str = "bold"):
+        super().__init__()
+        self.key = key
+        self._label, self._state, self._style = label, state, style
 
-    # ── 1. Identidad del programa (arriba) ───────────────────────────
-    identity = "TSR Downloader"
-    if _member_info:
-        identity += f" · {_member_info}"
-    parts.append(Text(_fit(identity, w - 1), style="bold yellow"))
+    def compose(self) -> ComposeResult:
+        yield Static(self._label, classes="row-label")
+        yield Static(self._state, classes="row-state")
 
-    # ── 2. Información de estado (segunda línea) ─────────────────────
-    if _status:
-        parts.append(Text(_fit(_status, w - 1), style="bold cyan"))
-
-    # Los avisos del sistema van antes de las descargas; así no parecen
-    # filas nuevas mezcladas con el orden permanente de los items.
-    for text, color in msgs:
-        parts.append(Text(_fit(text, w - 1), style=(_STYLES.get(color) or "dim")))
-
-    # ── 3. Tabla con separador, activos y completados ────────────────
-    if _active or _completed or msgs:
-        parts.append(Text("━" * min(w - 4, 62), style="dim"))
-
-        remaining = h - 1 - len(parts)
-        if remaining > 0:
-            # Una sola secuencia: cada fila conserva su posición original.
-            # Solo cambia su contenido al pasar de spinner a barra y a ✓/✗.
-            for item_id in _display_order:
-                if remaining <= 0:
-                    break
-                p = _active.get(item_id)
-                completed = _completed.get(item_id)
-                if p is not None:
-                    label = Text(p.label or " ", style="bold")
-                    if p.bar_kind == "spinner":
-                        right = Text(_spin_glyph(), style="bold magenta")
-                        if p.message_text:
-                            right.append(f"  {p.message_text}", style="dim")
-                    else:
-                        right = Text(p.bar, style="cyan")
-                    row = Table(show_header=False, show_edge=False, box=None,
-                                padding=(0, 0), expand=True)
-                    row.add_column(ratio=1, justify="left", overflow="ellipsis", no_wrap=True)
-                    row.add_column(justify="right", overflow="ellipsis", no_wrap=True)
-                    row.add_row(label, right)
-                    parts.append(row)
-                elif completed is not None:
-                    ic, name, style = completed
-                    # Completado: el icono sustituye al de descarga.
-                    row = Table(show_header=False, show_edge=False, box=None,
-                                padding=(0, 0), expand=True)
-                    row.add_column(ratio=1, justify="left", overflow="ellipsis", no_wrap=True)
-                    row.add_column(justify="right", overflow="ellipsis", no_wrap=True)
-                    row.add_row(Text(f"{ic} {name}", style=style), "")
-                    parts.append(row)
-                else:
-                    continue
-                remaining -= 1
-
-    if not parts:
-        return Text("")
-    return Group(*parts)
+    def update_row(self, label: str, state: str, style: str = "bold", done: bool = False):
+        self._label, self._state, self._style = label, state, style
+        self.query_one(".row-label", Static).update(label)
+        state_widget = self.query_one(".row-state", Static)
+        state_widget.update(state)
 
 
-def _render(force: bool = False):
-    """Actualiza el marco en pantalla (con throttle salvo en forcings)."""
-    if not _UI:
+class TSRApp(App[None]):
+    CSS = """
+    Screen { background: $surface; }
+    #identity { height: 1; color: #ff69b4; text-style: bold; }
+    #status { height: 1; color: cyan; text-style: bold; }
+    #messages { height: auto; max-height: 3; color: $text-muted; }
+    #downloads { height: 1fr; width: 100%; scrollbar-size: 1 1; }
+    #separator { height: 1; color: $text-muted; }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static("TSR Downloader", id="identity")
+        yield Static("", id="status")
+        yield VerticalScroll(id="messages")
+        yield Rule(id="separator")
+        yield VerticalScroll(id="downloads")
+
+    def on_mount(self) -> None:
+        _app_ready.set()
+        self.set_interval(0.35, self._tick_spinner)
+
+    def _tick_spinner(self) -> None:
+        with _lock:
+            pending = [progress for progress in _rows.values()
+                       if isinstance(progress, _Progress)
+                       and progress.bar_kind == "spinner"]
+        glyph = _SPINNERS[int(time.monotonic() * 3) % len(_SPINNERS)]
+        for progress in pending:
+            row = progress.row
+            if row is not None:
+                try:
+                    row.query_one(".row-state", Static).update(
+                        glyph + (f"  {progress.message_text}" if progress.message_text else "")
+                    )
+                except Exception:
+                    pass
+
+    def set_identity(self, text: str) -> None:
+        self.query_one("#identity", Static).update(text)
+
+    def set_status(self, text: str) -> None:
+        self.query_one("#status", Static).update(text)
+
+    def set_messages(self, messages: list[tuple[str, str]]) -> None:
+        box = self.query_one("#messages", VerticalScroll)
+        box.remove_children()
+        for text, style in messages:
+            box.mount(Static(text, classes=style or "dim"))
+
+    def add_row(self, row: DownloadRow) -> None:
+        self.query_one("#downloads", VerticalScroll).mount(row)
+
+
+def _call(method, *args):
+    app = _app
+    if app is None:
         return
-    global _live_active, _last_render
-    now = time.monotonic()
-    if not force and now - _last_render < 0.1:
-        return
-    _last_render = now
-    with _lock:
+    if threading.current_thread() is getattr(app, "_thread", None):
+        method(*args)
+    else:
         try:
-            if _live is None:
-                return
-            if not _live_active:
-                _live.start()
-                _live_active = True
-            # Rich no pinta con solo update(): hay que forzar el refresh.
-            _live.update(_build_renderable(), refresh=True)
-        except Exception:
+            app.call_from_thread(method, *args)
+        except RuntimeError:
+            # Puede ocurrir durante un cierre muy temprano de la aplicación.
             pass
 
 
-# ── Mensajes ──────────────────────────────────────────────────────────
+def init(nerd_requested: bool = True):
+    global _UI, _COLORS, _mode, _app
+    _COLORS = sys.stdout.isatty()
+    _UI = _COLORS
+    _mode = "unicode"
+    if not _UI:
+        return
+
+    _app = TSRApp()
+
+
+def run(worker):
+    """Ejecuta Textual en el hilo principal y ``worker`` en segundo plano."""
+    if not _UI or _app is None:
+        worker()
+        return
+
+    _app._thread = threading.current_thread()
+    def run_worker():
+        try:
+            worker()
+        finally:
+            try:
+                app.exit()
+            except Exception:
+                pass
+
+    thread = threading.Thread(target=run_worker, name="downloader-worker", daemon=True)
+    thread.start()
+    _app.run()
+    thread.join(timeout=2)
+
+
+def _paint(text: str, color: str) -> str:
+    return f"{_ANSI.get(color, '')}{text}{_RESET}" if _COLORS and color else text
+
+
+def _emit(text: str, end: str = "\n"):
+    sys.stdout.write(text + end)
+    sys.stdout.flush()
+
+
+def _refresh_messages() -> None:
+    _call(_app.set_messages, list(_log)) if _app else None
+
 
 def _log_msg(text: str, color: str):
     with _lock:
         _log.append((text, color))
     if not _UI:
-        _emit(_paint(text, _ANSI.get(color, "")) if color else text)
+        _emit(_paint(text, color))
+    else:
+        _refresh_messages()
 
 
-def info(msg: str):
-    _log_msg(msg, "cyan")
+def info(msg: str): _log_msg(msg, "cyan")
+def ok(msg: str): _log_msg(msg, "green")
+def err(msg: str): _log_msg(msg, "red")
+def warn(msg: str): _log_msg(msg, "yellow")
+def note(msg: str): _log_msg(msg, "")
 
-def ok(msg: str):
-    _log_msg(msg, "green")
-
-def err(msg: str):
-    _log_msg(msg, "red")
-
-def warn(msg: str):
-    _log_msg(msg, "yellow")
-
-def note(msg: str):
-    _log_msg(msg, "")
-
-
-# ── Barra de estado ───────────────────────────────────────────────────
 
 def set_session_info(member_id: str = "", authenticated: bool = True):
     global _member_info
-    if authenticated and member_id:
-        _member_info = f"Miembro #{member_id}"
-    else:
-        _member_info = "Anónimo"
-    _render(force=True)
+    _member_info = f"Miembro #{member_id}" if authenticated and member_id else "Anónimo"
+    if _app:
+        _call(_app.set_identity, f"TSR Downloader · {_member_info}")
 
 
 def update_status(*, total: int | None = None, active: int | None = None,
-                  queue: int | None = None,
-                  ok_count: int | None = None, failed: int | None = None):
+                  queue: int | None = None, ok_count: int | None = None,
+                  failed: int | None = None):
     global _status, _total_files
     if total is not None:
         _total_files = total
+    values = [f"Total: {_total_files}"]
+    if ok_count is not None: values.append(f"Descargados: {ok_count}")
+    if failed is not None: values.append(f"Fallaron: {failed}")
+    if active is not None: values.append(f"Descargando: {active}")
+    if queue is not None: values.append(f"Cola: {queue}")
+    _status = " | ".join(values)
+    if _app: _call(_app.set_status, _status)
 
-    parts = []
-    parts.append(f"Total: {_total_files}")
-    if ok_count is not None:
-        parts.append(f"Descargados: {ok_count}")
-    if failed is not None:
-        parts.append(f"Fallaron: {failed}")
-    if active is not None:
-        parts.append(f"Descargando: {active}")
-    if queue is not None:
-        parts.append(f"Cola: {queue}")
-    _status = " | ".join(parts)
-    _render(force=True)
-
-
-# ── Progreso de descargas ─────────────────────────────────────────────
 
 class _Progress:
-    def __init__(self, item_id: int):
-        self.item_id = item_id
-        self.label: str | None = None       # None = "preparando descarga"
-        self.bar: str = ""
-        self.bar_kind: str = "spinner"      # "spinner" | "bar"
-        self.message_text: str = ""
+    def __init__(self, item_id: int, row_key: object):
+        self.item_id, self.row_key = item_id, row_key
+        self.label = None
+        self.bar_kind = "spinner"
+        self.message_text = ""
+        self.bar = ""
+        self.row: DownloadRow | None = None
 
     def set_label(self, label: str | None = None):
-        with _lock:
-            self.label = label
-        self._show()
+        self.label = label
+        _update_active_row(self)
 
     def message(self, text: str):
-        """Mensaje de espera (temporizador TSR) junto al spinner."""
-        with _lock:
-            self.message_text = text
-            self.bar_kind = "spinner"
-            if not _UI:
-                self._emit_plain(f"{self.label or ''} — {text}")
-        _start_tick()
-        _render()
+        self.message_text, self.bar_kind = text, "spinner"
+        _update_active_row(self)
 
-    def update(self, pct: float, downloaded: float, total: float,
-               speed: float, eta: float):
-        bar = (f"{build_bar(pct)} {pct:3.0f}%  "
-               f"{format_bytes(downloaded)}/{format_bytes(total)}  "
-               f"{format_speed(speed)}  ETA {format_eta(eta)}")
-        with _lock:
-            self.bar = bar
-            self.bar_kind = "bar"
-            self.message_text = ""
-            if not _UI:
-                global _plain_cr
-                _plain_cr = True
-                self._emit_plain(bar, end="\r")
-        _render()
+    def update(self, pct: float, downloaded: float, total: float, speed: float, eta: float):
+        self.bar = (f"{build_bar(pct)} {pct:3.0f}%  {format_bytes(downloaded)}/"
+                    f"{format_bytes(total)}  {format_speed(speed)}  ETA {format_eta(eta)}")
+        self.bar_kind, self.message_text = "bar", ""
+        _update_active_row(self)
 
-    def _show(self):
-        _render()
 
-    @staticmethod
-    def _emit_plain(text: str, end: str = "\n"):
-        _emit(text, end)
+def _update_active_row(progress: _Progress):
+    state = progress.bar if progress.bar_kind == "bar" else "SPINNER:" + (f"  {progress.message_text}" if progress.message_text else "")
+    row = _rows.get(progress.row_key)
+    if row:
+        _call(row.update_row, progress.label or " ", state, "bold")
 
 
 def start_progress(item_id: int, label: str | None = None) -> _Progress:
-    global _display_order
     with _lock:
-        # La fila puede crearse al detectar la URL, antes de las peticiones
-        # de comprobación. La descarga real reutiliza esa misma fila.
-        p = _active.get(item_id)
-        if p is not None:
-            if label is not None:
-                p.set_label(label)
-            return p
-        p = _Progress(item_id)
-        p.label = label                          # None = spinner preparando
-        _active[item_id] = p
-        if item_id not in _display_order:
-            _display_order.append(item_id)
-    _start_tick()
-    _render(force=True)
-    return p
+        existing = next((p for key, p in _rows.items() if key == item_id and isinstance(p, _Progress)), None)
+        if existing:
+            if label is not None: existing.set_label(label)
+            return existing
+        progress = _Progress(item_id, item_id)
+        progress.label = label
+        _rows[item_id] = progress
+        _order.append(item_id)
+    row = DownloadRow(item_id, label or " ", "SPINNER:", "bold")
+    progress.row = row
+    _rows[item_id] = progress
+    _call(_app.add_row, row) if _app else None
+    return progress
 
 
 def finish_progress(item_id: int, name: str, color: str = "green"):
-    global _plain_cr
     with _lock:
-        _active.pop(item_id, None)
-        style = _STYLES.get(color, "green")
-        ic = icon("error") if color == "red" else icon("ok")
-        # La fila conserva su posición original; solo cambia de estado.
-        _completed[item_id] = (ic, name, style)
-        if item_id not in _display_order:
-            _display_order.append(item_id)
-
-        if not _UI:
-            if _plain_cr:
-                _plain_cr = False
-                _emit("")
-            verb = "Error:" if color == "red" else "Guardado:"
-            _emit(_paint(f"{ic} {verb} {name}", _ANSI.get(color, "")))
-
-    if not any(p.bar_kind == "spinner" for p in _active.values()):
-        _stop_tick()
-    _render(force=True)
+        progress = _rows.get(item_id)
+    row = progress.row if isinstance(progress, _Progress) else None
+    if row is not None:
+        label = f"{icon('error' if color == 'red' else 'ok')} {name}"
+        _call(row.update_row, label, "", _STYLES.get(color, "green"), True)
+    if not _UI:
+        _emit(_paint(f"{icon('error' if color == 'red' else 'ok')} {'Error:' if color == 'red' else 'Guardado:'} {name}", color))
 
 
 def finish_duplicate(item_id: int, name: str):
-    """Añade una nueva copia de un item ya descargado a la secuencia."""
-    row_id = ("duplicate", item_id, time.monotonic_ns())
+    row_key = ("duplicate", item_id, time.monotonic_ns())
+    row = DownloadRow(row_key, f"{icon('dup')} {name}", "", "dim")
     with _lock:
-        # Cada detección ocupa una fila propia, aunque el item ya tenga
-        # otras filas anteriores en esta sesión.
-        _completed[row_id] = (icon("dup").strip() or "~", name, "dim")
-        _display_order.append(row_id)
-    _render(force=True)
+        _rows[row_key] = row
+        _order.append(row_key)
+    if _app: _call(_app.add_row, row)
+    elif not _UI: _emit(_paint(f"{icon('dup')} {name}", "gray"))
 
-
-# ── Cierre ────────────────────────────────────────────────────────────
 
 def shutdown(success: int, failed: int, last: str):
-    global _UI, _live_active
-    _stop_tick()
-    if _UI and _live is not None and _live_active:
-        try:
-            _live.stop()
-        except Exception:
-            pass
-        _live_active = False
+    global _UI
     _UI = False
-
-    w = _console.width if _console is not None else shutil.get_terminal_size().columns
-    sep = "─" * max(1, min(w - 2, 62))
+    width = shutil.get_terminal_size().columns
+    sep = "─" * max(1, min(width - 2, 62))
     _emit("")
-    _emit(_paint(sep, _GRAY))
+    _emit(_paint(sep, "gray"))
     _emit(f"Resumen — descargados: {success} | fallidos: {failed}")
-    if last:
-        _emit(f"Último archivo: {last}")
-    _emit(_paint(sep, _GRAY))
+    if last: _emit(f"Último archivo: {last}")
+    _emit(_paint(sep, "gray"))

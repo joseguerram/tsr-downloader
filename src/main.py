@@ -95,6 +95,8 @@ def _refresh_status():
         active=len(active),
         queue=len(queue),
         last=_last_file,
+        ok_count=_session_ok,
+        failed=_session_failed,
     )
 
 
@@ -107,7 +109,7 @@ def on_download_done(item_id: int, filename: str, error: Exception | None):
         _session_failed += 1
         display.finish_progress(
             item_id,
-            f"{display.icon('error')} Error en item {item_id}: {error}",
+            f"item {item_id} ({type(error).__name__})",
             "red",
         )
     else:
@@ -123,11 +125,11 @@ def on_download_done(item_id: int, filename: str, error: Exception | None):
             while len(history) > config.history_size:
                 history.pop()
             save_history(history)
-        display.finish_progress(item_id, f"{display.icon('ok')} Guardado: {filename}")
+        display.finish_progress(item_id, filename)
 
     _refresh_status()
     if not active and not queue:
-        display.ok(f"{display.icon('ok')} Todas las descargas completadas")
+        display.flash("✓ Todas las descargas completadas")
 
 
 def _do_download(item_id: int):
@@ -244,8 +246,8 @@ def main():
     if history:
         _last_file = history[0].get("filename", "")
 
-    status = f"miembro #{session.member_id}" if session.authenticated else "anónimo"
-    display.info(f"{display.icon('new')} TSR Downloader listo ({status}) — copia enlaces de TSR")
+    display.set_session_info(session.member_id, session.authenticated)
+    display.info(f"{display.icon('new')} TSR Downloader listo — copia enlaces de TSR")
     _refresh_status()
 
     try:

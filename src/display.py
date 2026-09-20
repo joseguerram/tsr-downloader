@@ -32,8 +32,13 @@ _plain_cr = False    # en modo texto, la barra terminó con \r (sin salto de lí
 _lock = threading.RLock()
 
 _status = ""
-_log: deque = deque(maxlen=200)          # (texto_plano, color_ansi)
+_log: deque = deque(maxlen=200)          # (texto_plano, color_ansi) — console interna, no se muestra en UI
 _active: dict[int, "_Progress"] = {}
+_completed: deque = deque(maxlen=5)      # (icono, nombre, color_ansi) — fila compacta del header
+_session_ok = 0
+_session_failed = 0
+_member_info = ""                        # "Miembro #1788704" o "Anónimo"
+_total_files = 0
 
 _ICON_SETS = {
     "download": ("\uf019 ", "↓ ", "  "),
@@ -298,22 +303,55 @@ def _emit(text: str, end: str = "\n"):
 def _build_frame() -> list:
     w = shutil.get_terminal_size().columns
     h = shutil.get_terminal_size().lines
+    active_items = list(_active.values())
 
     lines: list[str] = []
+
+    # ── 1. Barra de estado (siempre arriba) ──────────────────────────────
     if _status:
         lines.append(_paint(_fit(_status, w - 1), _BOLD))
 
-    reserved = 1 + 2 * len(_active)  # barra de estado + 2 líneas por descarga
-    space = max(0, h - reserved - 1)
-    for text, color in list(_log)[-space:]:
-        lines.append(_paint(_fit(text, w - 1), color))
+    # ── 1b. Aviso temporal ───────────────────────────────────────────────
+    if _flash and time.monotonic() < _flash_until:
+        lines.append(_paint(_fit(_flash, w - 1), _COLOR_MAP.get(_flash_color, _GREEN)))
 
-    for p in list(_active.values()):
+    # ── 2. Completados recientes (fila(s) compactas) ────────────────────
+    if _completed:
+        chunks = [_fit(f"{ic} {name}", 26) for ic, name, _ in list(_completed)[::-1]]
+        wrapped = _wrap_chunks(chunks, max(40, w - 4))
+        for row in wrapped[:2]:  # máximo 2 líneas para no desplazar el progreso
+            lines.append(_paint(_fit(row, w - 1), _GRAY))
+
+    # ── 3. Separador ─────────────────────────────────────────────────────
+    if active_items:
+        lines.append(_paint("━" * max(1, min(w - 1, 62)), _GRAY))
+
+    # ── 4. Descargas activas ─────────────────────────────────────────────
+    for p in active_items:
         lines.append(_paint(_fit(p.label, w - 1), _CYAN))
         bar_color = _COLOR_MAP.get(p.bar_color, _CYAN)
         lines.append(_paint(_fit(p.bar, w - 1), bar_color) if p.bar else "")
 
+    # ── Recorte final por altura de terminal ─────────────────────────────
+    if len(lines) > h - 1:
+        lines = lines[: h - 1]
+
     return lines
+
+
+def _wrap_chunks(chunks: list[str], width: int) -> list[str]:
+    """Distribuye fragmentos en filas sin cortarlos a mitad (wrap por palabra)."""
+    rows: list[str] = []
+    current = ""
+    for chunk in chunks:
+        if current and len(current) + len(chunk) + 1 > width:
+            rows.append(current)
+            current = chunk
+        else:
+            current = (current + " " + chunk) if current else chunk
+    if current:
+        rows.append(current)
+    return rows
 
 
 def _render(force: bool = False):
@@ -336,12 +374,12 @@ def _render(force: bool = False):
 # ── Mensajes ──────────────────────────────────────────────────────────
 
 def _log_msg(text: str, color: str):
-    if _UI:
-        with _lock:
-            _log.append((text, color))
-        _render(force=True)
-    else:
+    with _lock:
+        _log.append((text, color))
+    if not _UI:
         _emit(_paint(text, color) if color else text)
+    # En modo UI no se muestran en pantalla (la sección compacta de
+    # completados y la barra de estado cubren la información útil).
 
 
 def info(msg: str):
@@ -364,14 +402,64 @@ def note(msg: str):
     _log_msg(msg, "")
 
 
+# ── Aviso temporal ────────────────────────────────────────────────────
+
+_flash = ""
+_flash_until = 0.0
+_flash_color = "green"
+
+
+def flash(msg: str, seconds: float = 6.0, color: str = "green"):
+    """Muestra un aviso temporal bajo la barra de estado y lo borra solo."""
+    global _flash, _flash_until, _flash_color
+    with _lock:
+        _flash = msg
+        _flash_until = time.monotonic() + seconds
+        _flash_color = color
+        if not _UI:
+            c = _COLOR_MAP.get(color)
+            _emit(_paint(msg, c) if c else msg)
+    _render(force=True)
+    t = threading.Timer(seconds, _clear_flash)
+    t.daemon = True
+    t.start()
+
+
+def _clear_flash():
+    global _flash
+    with _lock:
+        if _flash:
+            _flash = ""
+    _render(force=True)
+
+
 # ── Barra de estado ───────────────────────────────────────────────────
 
+def set_session_info(member_id: str = "", authenticated: bool = True):
+    """Fija la identidad del usuario (miembro #XXX o anónimo)."""
+    global _member_info
+    if authenticated and member_id:
+        _member_info = f"Miembro #{member_id}"
+    else:
+        _member_info = "Anónimo"
+    _refresh_status()
+
+
 def update_status(*, total: int | None = None, active: int | None = None,
-                  queue: int | None = None, last: str | None = None):
-    global _status
-    parts = ["TSR Downloader"]
+                  queue: int | None = None, last: str | None = None,
+                  ok_count: int | None = None, failed: int | None = None):
+    global _status, _total_files
     if total is not None:
-        parts.append(f"Total: {total}")
+        _total_files = total
+
+    parts = ["TSR Downloader"]
+    if _member_info:
+        parts.append(_member_info)
+    parts.append(f"Total: {_total_files}")
+    if ok_count is not None:
+        parts.append(f"OK: {ok_count}")
+    if failed is not None:
+        parts.append(f"Fail: {failed}")
     if active is not None:
         parts.append(f"Descargando: {active}")
     if queue is not None:
@@ -379,6 +467,10 @@ def update_status(*, total: int | None = None, active: int | None = None,
     if last:
         parts.append(f"Último: {last}")
     _status = " | ".join(parts)
+    _render(force=True)
+
+
+def _refresh_status():
     _render(force=True)
 
 
@@ -432,18 +524,25 @@ def start_progress(item_id: int, label: str) -> _Progress:
     return p
 
 
-def finish_progress(item_id: int, text: str, color: str = "green"):
-    """Finaliza (y elimina) una descarga activa, dejando su línea de resultado."""
+def finish_progress(item_id: int, name: str, color: str = "green"):
+    """Finaliza (y elimina) una descarga activa, añadiéndola a la fila compacta.
+
+    name: texto corto para el header (nombre de archivo o identificación).
+    color: \"green\" (éxito) o \"red\" (error).
+    """
     global _plain_cr
     with _lock:
         _active.pop(item_id, None)
         c = _COLOR_MAP.get(color, _GREEN)
-        if _UI:
-            _log.append((text, c))
-        else:
+        ic = icon("error") if color == "red" else icon("ok")
+        _completed.append((ic.strip() or "·", name, c))
+
+        if not _UI:
             if _plain_cr:
                 _plain_cr = False
                 _emit("")
+            verb = "Error:" if color == "red" else "Guardado:"
+            text = f"{ic}{verb} {name}"
             _emit(_paint(text, c) if c else text)
     _render(force=True)
 

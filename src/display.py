@@ -63,7 +63,8 @@ _lock = threading.RLock()
 _status = ""
 _log: deque = deque(maxlen=200)
 _active: dict[int, "_Progress"] = {}
-_completed: list[tuple[str, str, str]] = []   # (icono, nombre, estilo)
+_completed: dict[int, tuple[str, str, str]] = {}  # item_id → (icono, nombre, estilo)
+_display_order: list[int] = []               # orden permanente de las filas
 _session_ok = 0
 _session_failed = 0
 _member_info = ""
@@ -373,27 +374,31 @@ def _build_renderable():
         t.add_column(ratio=1, justify="left", overflow="ellipsis", no_wrap=True)
         t.add_column(justify="right", overflow="ellipsis", no_wrap=True)
 
-        # Los avisos se reservan abajo: el feedback gana a los completados
+        # Los avisos se reservan abajo: el feedback gana a las filas.
         remaining = h - 1 - len(parts) - len(msgs)
         if remaining > 0:
-            for p in list(_active.values()):
+            # Una sola secuencia: cada fila conserva su posición original.
+            # Solo cambia su contenido al pasar de spinner a barra y a ✓/✗.
+            for item_id in _display_order:
                 if remaining <= 0:
                     break
-                label = Text(p.label or " ", style="bold")
-                if p.bar_kind == "spinner":
-                    right = Text(_spin_glyph(), style="bold magenta")
-                    if p.message_text:
-                        right.append(f"  {p.message_text}", style="dim")
+                p = _active.get(item_id)
+                completed = _completed.get(item_id)
+                if p is not None:
+                    label = Text(p.label or " ", style="bold")
+                    if p.bar_kind == "spinner":
+                        right = Text(_spin_glyph(), style="bold magenta")
+                        if p.message_text:
+                            right.append(f"  {p.message_text}", style="dim")
+                    else:
+                        right = Text(p.bar, style="cyan")
+                    t.add_row(label, right)
+                elif completed is not None:
+                    ic, name, style = completed
+                    # Completado: el icono sustituye al de descarga.
+                    t.add_row(Text(f"{ic} {name}", style=style), "")
                 else:
-                    right = Text(p.bar, style="cyan")
-                t.add_row(label, right)
-                remaining -= 1
-
-            for ic, name, style in _completed:
-                if remaining <= 0:
-                    break
-                # Completado: icono a la izquierda reemplaza al de descarga
-                t.add_row(Text(f"{ic} {name}", style=style), "")
+                    continue
                 remaining -= 1
 
         parts.append(t)
@@ -537,6 +542,7 @@ class _Progress:
 
 
 def start_progress(item_id: int, label: str | None = None) -> _Progress:
+    global _display_order
     with _lock:
         # La fila puede crearse al detectar la URL, antes de las peticiones
         # de comprobación. La descarga real reutiliza esa misma fila.
@@ -548,6 +554,8 @@ def start_progress(item_id: int, label: str | None = None) -> _Progress:
         p = _Progress(item_id)
         p.label = label                          # None = spinner preparando
         _active[item_id] = p
+        if item_id not in _display_order:
+            _display_order.append(item_id)
     _start_tick()
     _render(force=True)
     return p
@@ -559,8 +567,10 @@ def finish_progress(item_id: int, name: str, color: str = "green"):
         _active.pop(item_id, None)
         style = _STYLES.get(color, "green")
         ic = icon("error") if color == "red" else icon("ok")
-        # Nuevos abajo: la lista se apila en orden cronológico
-        _completed.append((ic, name, style))
+        # La fila conserva su posición original; solo cambia de estado.
+        _completed[item_id] = (ic, name, style)
+        if item_id not in _display_order:
+            _display_order.append(item_id)
 
         if not _UI:
             if _plain_cr:

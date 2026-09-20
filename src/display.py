@@ -202,7 +202,7 @@ class TSRApp(App[None]):
         rendered = Text(title, style="#ff4fd8")
         if separator:
             rendered.append(" · ", style="#8d75a8")
-            rendered.append(member, style="#00e5ff")
+            rendered.append(member, style="#ff4fd8")
         self.query_one("#identity", Static).update(rendered)
 
     def set_status(self, text: str) -> None:

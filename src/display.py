@@ -30,7 +30,20 @@ _ICON_SETS = {
     "new": ("+", "+", "+"),
 }
 
-_STYLES = {"green": "green", "red": "red", "yellow": "yellow", "cyan": "cyan", "gray": "dim"}
+_STYLES = {
+    "green": "green",
+    "red": "red",
+    "yellow": "yellow",
+    "cyan": "cyan",
+    "gray": "dim",
+}
+_TEXT_STYLES = {
+    "green": "#62ff9b",
+    "red": "#ff5370",
+    "yellow": "#ffe66d",
+    "cyan": "#00e5ff",
+    "gray": "#8892a8",
+}
 _ANSI = {"green": "\033[32m", "red": "\033[31m", "yellow": "\033[33m", "cyan": "\033[36m", "gray": "\033[90m"}
 _RESET = "\033[0m"
 
@@ -357,7 +370,7 @@ def finish_progress(item_id: int, name: str, color: str = "green"):
     row = progress.row if isinstance(progress, _Progress) else None
     if row is not None:
         label = f"{icon('error' if color == 'red' else 'ok')} {name}"
-        _call(row.update_row, label, "", _STYLES.get(color, "green"), True)
+        _call(row.update_row, label, "", _TEXT_STYLES.get(color, "#62ff9b"), True)
     if not _UI:
         _emit(_paint(f"{icon('error' if color == 'red' else 'ok')} {'Error:' if color == 'red' else 'Guardado:'} {name}", color))
 

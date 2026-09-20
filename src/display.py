@@ -130,6 +130,8 @@ class DownloadRow(Horizontal):
 
 
 class TSRApp(App[None]):
+    TITLE = "TSR Downloader"
+    BINDINGS = [("q", "quit", "Cerrar"), ("ctrl+c", "quit", "Cerrar")]
     CSS = """
     Screen { background: #080b16; color: #c8d0e0; }
     #identity {

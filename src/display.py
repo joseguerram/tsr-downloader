@@ -475,14 +475,14 @@ def update_status(*, total: int | None = None, active: int | None = None,
     if total is not None:
         _total_files = total
 
-    parts = ["TSR Downloader"]
+    parts = []
     if _member_info:
         parts.append(_member_info)
     parts.append(f"Total: {_total_files}")
     if ok_count is not None:
         parts.append(f"OK: {ok_count}")
     if failed is not None:
-        parts.append(f"Fail: {failed}")
+        parts.append(f"Fallaron: {failed}")
     if active is not None:
         parts.append(f"Descargando: {active}")
     if queue is not None:

@@ -22,28 +22,33 @@ _YELLOW = "\033[33m"
 _CYAN = "\033[36m"
 _GRAY = "\033[90m"
 
+# ── Animación spinner (giratorio, distinto a la barra) ─────────────────
+_SPINNERS = ["◜", "◝", "◞", "◟"]
+_spin_idx = 0
+
 # ── Estado global ──────────────────────────────────────────────────────
 _COLORS = True
-_UI = False          # interfaz con marco (barra de estado + progreso en sitio)
+_UI = False
 _last_render = 0.0
-_mode = "unicode"    # "nerd" | "unicode" | "none"
-_plain_cr = False    # en modo texto, la barra terminó con \r (sin salto de línea)
+_mode = "unicode"
+_plain_cr = False
+_tick_timer: threading.Timer | None = None
 
 _lock = threading.RLock()
 
 _status = ""
-_log: deque = deque(maxlen=200)          # (texto_plano, color_ansi) — console interna, no se muestra en UI
+_log: deque = deque(maxlen=200)
 _active: dict[int, "_Progress"] = {}
-_completed: deque = deque(maxlen=5)      # (icono, nombre, color_ansi) — fila compacta del header
+_completed: deque = deque(maxlen=3)      # fila compacta: máximo 3
 _session_ok = 0
 _session_failed = 0
-_member_info = ""                        # "Miembro #1788704" o "Anónimo"
+_member_info = ""
 _total_files = 0
 
 _ICON_SETS = {
     "download": ("\uf019 ", "↓ ", "  "),
-    "ok":       ("\uf00c ", "✓ ", "  "),
-    "error":    ("\uf00d ", "✗ ", "  "),
+    "ok":       ("\uf00c ", "✓ ", "✓ "),
+    "error":    ("\uf00d ", "✗ ", "✗ "),
     "queue":    ("\uf017 ", "… ", "> "),
     "vip":      ("\uf023 ", "■ ", "! "),
     "dup":      ("\uf0c7 ", "~ ", "- "),
@@ -61,13 +66,11 @@ _COLOR_MAP = {
 # ── Detección de Nerd Font ────────────────────────────────────────────
 
 def _nerd_font_windows() -> bool:
-    """Detecta Nerd Font en Windows leyendo el nombre de la fuente de consola."""
     if os.name != "nt":
         return False
     try:
         import ctypes
         from ctypes import wintypes
-
         kernel32 = ctypes.windll.kernel32
 
         class COORD(ctypes.Structure):
@@ -89,7 +92,7 @@ def _nerd_font_windows() -> bool:
         ]
         kernel32.GetCurrentConsoleFontEx.restype = wintypes.BOOL
 
-        h = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        h = kernel32.GetStdHandle(-11)
         info = CONSOLE_FONT_INFOEX()
         info.cbSize = ctypes.sizeof(CONSOLE_FONT_INFOEX)
         if kernel32.GetCurrentConsoleFontEx(h, False, ctypes.byref(info)):
@@ -100,12 +103,7 @@ def _nerd_font_windows() -> bool:
 
 
 def _probe_glyph(stdin_fd: int, stdout_fd: int, glyph: str) -> bool:
-    """Escribe un glifo y comprueba si el cursor avanza exactamente 1 columna.
-
-    Devuelve True si el glifo se dibuja con ancho 1 (fuente con el glifo).
-    """
     import select
-
     os.write(stdout_fd, b"\033[s")
     os.write(stdout_fd, b"\033[1G")
     os.write(stdout_fd, glyph.encode("utf-8", "replace"))
@@ -130,23 +128,16 @@ def _probe_glyph(stdin_fd: int, stdout_fd: int, glyph: str) -> bool:
         col = int(text.split("[")[-1].rstrip("R").split(";")[1])
     except ValueError:
         return False
-    return col == 2  # salimos de la columna 1 → glifo de 1 celda
+    return col == 2
 
 
 def _nerd_font_probe() -> bool:
-    """Sonda la terminal: verifica que dos glifos Nerd se dibujan a ancho 1.
-
-    Un glifo Nerd Font ocupa una celda; un glifo de reserva (tofu) también
-    suele ocupar una, así que se comprueban dos glifos de familias distintas
-    (Powerline y FontAwesome) para reducir falsos positivos.
-    """
     if os.name != "posix":
         return False
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return False
     try:
-        import termios
-        import tty
+        import termios, tty
         stdin_fd = sys.stdin.fileno()
         stdout_fd = sys.stdout.fileno()
         attrs = termios.tcgetattr(stdin_fd)
@@ -155,10 +146,8 @@ def _nerd_font_probe() -> bool:
 
     try:
         tty.setraw(stdin_fd)
-        ok = (
-            _probe_glyph(stdin_fd, stdout_fd, "\ue0b0")  # Powerline
-            and _probe_glyph(stdin_fd, stdout_fd, "\uf019")  # FontAwesome
-        )
+        ok = (_probe_glyph(stdin_fd, stdout_fd, "\ue0b0")
+              and _probe_glyph(stdin_fd, stdout_fd, "\uf019"))
         return ok
     except Exception:
         return False
@@ -176,13 +165,11 @@ def _nerd_font_probe() -> bool:
 # ── Soporte de color en Windows ───────────────────────────────────────
 
 def _enable_windows_vt() -> bool:
-    """Activa el procesamiento de secuencias VT en consolas modernas de Windows."""
     if os.name != "nt":
         return True
     try:
         import ctypes
         from ctypes import wintypes
-
         kernel32 = ctypes.windll.kernel32
         kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
         kernel32.GetConsoleMode.restype = wintypes.BOOL
@@ -191,7 +178,7 @@ def _enable_windows_vt() -> bool:
 
         ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
         ok = True
-        for std in (-11, -12):  # stdout, stderr
+        for std in (-11, -12):
             h = kernel32.GetStdHandle(std)
             mode = wintypes.DWORD()
             if kernel32.GetConsoleMode(h, ctypes.byref(mode)):
@@ -207,16 +194,11 @@ def _enable_windows_vt() -> bool:
 # ── Inicialización ────────────────────────────────────────────────────
 
 def init(nerd_requested: bool = True):
-    """Configura colores, interfaz de marco y modo de iconos.
-
-    nerd_requested: si el usuario permite iconos Nerd Font en la config.
-    """
     global _COLORS, _UI, _mode
 
     is_tty = sys.stdout.isatty()
 
     if not is_tty:
-        # Salida redirigida (script, IDE, pipe): texto plano sin colores
         _COLORS = False
         _UI = False
     elif os.name == "nt":
@@ -225,7 +207,7 @@ def init(nerd_requested: bool = True):
             _UI = True
         else:
             try:
-                import colorama  # integración legacy de Windows
+                import colorama
                 colorama.init()
             except ImportError:
                 _COLORS = False
@@ -243,7 +225,6 @@ def init(nerd_requested: bool = True):
 
 
 def icon(name: str) -> str:
-    """Devuelve el identificador visual (prefijo) para un contexto."""
     nerd, uni, none = _ICON_SETS[name]
     if _mode == "nerd":
         return nerd
@@ -280,7 +261,9 @@ def format_speed(bps: float) -> str:
     return format_bytes(bps) + "/s"
 
 
-def format_eta(seconds: float) -> str:
+def format_eta(seconds: float | None) -> str:
+    if seconds is None:
+        return ""
     seconds = int(seconds)
     if seconds < 60:
         return f"{seconds}s"
@@ -293,6 +276,35 @@ def build_bar(pct: float, width: int = 24) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+# ── Animación spinner ─────────────────────────────────────────────────
+
+def _start_tick():
+    """Arranca el temporizador que anima los spinners (si no corre ya)."""
+    global _tick_timer
+    if _tick_timer is not None:
+        return
+
+    def _do_tick():
+        global _tick_timer, _spin_idx
+        _spin_idx += 1
+        if any(p.bar_kind == "spinner" for p in _active.values()):
+            _render(force=True)
+            _tick_timer = threading.Timer(0.35, _do_tick)
+            _tick_timer.daemon = True
+            _tick_timer.start()
+        else:
+            _tick_timer = None
+
+    _tick_timer = threading.Timer(0.35, _do_tick)
+    _tick_timer.daemon = True
+    _tick_timer.start()
+
+
+def _stop_tick():
+    global _tick_timer
+    _tick_timer = None
+
+
 # ── Salida ────────────────────────────────────────────────────────────
 
 def _emit(text: str, end: str = "\n"):
@@ -300,47 +312,7 @@ def _emit(text: str, end: str = "\n"):
     sys.stdout.flush()
 
 
-def _build_frame() -> list:
-    w = shutil.get_terminal_size().columns
-    h = shutil.get_terminal_size().lines
-    active_items = list(_active.values())
-
-    lines: list[str] = []
-
-    # ── 1. Barra de estado (siempre arriba) ──────────────────────────────
-    if _status:
-        lines.append(_paint(_fit(_status, w - 1), _BOLD))
-
-    # ── 1b. Aviso temporal ───────────────────────────────────────────────
-    if _flash and time.monotonic() < _flash_until:
-        lines.append(_paint(_fit(_flash, w - 1), _COLOR_MAP.get(_flash_color, _GREEN)))
-
-    # ── 2. Completados recientes (fila(s) compactas) ────────────────────
-    if _completed:
-        chunks = [_fit(f"{ic} {name}", 26) for ic, name, _ in list(_completed)[::-1]]
-        wrapped = _wrap_chunks(chunks, max(40, w - 4))
-        for row in wrapped[:2]:  # máximo 2 líneas para no desplazar el progreso
-            lines.append(_paint(_fit(row, w - 1), _GRAY))
-
-    # ── 3. Separador ─────────────────────────────────────────────────────
-    if active_items:
-        lines.append(_paint("━" * max(1, min(w - 1, 62)), _GRAY))
-
-    # ── 4. Descargas activas ─────────────────────────────────────────────
-    for p in active_items:
-        lines.append(_paint(_fit(p.label, w - 1), _CYAN))
-        bar_color = _COLOR_MAP.get(p.bar_color, _CYAN)
-        lines.append(_paint(_fit(p.bar, w - 1), bar_color) if p.bar else "")
-
-    # ── Recorte final por altura de terminal ─────────────────────────────
-    if len(lines) > h - 1:
-        lines = lines[: h - 1]
-
-    return lines
-
-
 def _wrap_chunks(chunks: list[str], width: int) -> list[str]:
-    """Distribuye fragmentos en filas sin cortarlos a mitad (wrap por palabra)."""
     rows: list[str] = []
     current = ""
     for chunk in chunks:
@@ -352,6 +324,74 @@ def _wrap_chunks(chunks: list[str], width: int) -> list[str]:
     if current:
         rows.append(current)
     return rows
+
+
+# ── Marco ─────────────────────────────────────────────────────────────
+
+def _get_bar_text(p: "_Progress", width: int) -> str:
+    """Texto de barra/spinner de un progreso activo (sin contar el label)."""
+    if p.bar_kind == "bar":
+        return p.bar
+
+    spin = _SPINNERS[_spin_idx % len(_SPINNERS)]
+
+    if p.message_text:
+        msg = p.message_text
+        if _COLORS:
+            return f"{spin}  {_DIM}{msg}{_RESET}"
+        return f"{spin}  {msg}"
+
+    return spin
+
+
+def _build_frame() -> list:
+    w = shutil.get_terminal_size().columns
+    h = shutil.get_terminal_size().lines
+    active_items = list(_active.values())
+    lines: list[str] = []
+
+    # ── 1. Barra de estado (siempre arriba) ──────────────────────────
+    if _status:
+        txt = _status
+        if len(txt) > w - 1:
+            txt = txt[: w - 1] + "…"
+        lines.append(_paint(txt, _BOLD))
+
+    # ── 1b. Aviso temporal ───────────────────────────────────────────
+    if _flash and time.monotonic() < _flash_until:
+        lines.append(_paint(_fit(_flash, w - 1), _COLOR_MAP.get(_flash_color, _GREEN)))
+
+    # ── 2. Completados recientes (fila fija, wrap horizontal) ────────
+    if _completed:
+        chunks = [_fit(f"{ic} {name}", 26) for ic, name, _ in list(_completed)[::-1]]
+        wrapped = _wrap_chunks(chunks, max(40, w - 4))
+        for row in wrapped[:2]:
+            lines.append(_paint(_fit(row, w - 1), _GRAY))
+
+    # ── 3. Separador (si hay activos) ───────────────────────────────
+    if active_items:
+        lines.append(_paint("━" * max(1, min(w - 1, 62)), _GRAY))
+
+    # ── 4. Descargas activas ────────────────────────────────────────
+    for p in active_items:
+        suffix = _get_bar_text(p, w)
+
+        if p.bar_kind == "spinner":
+            # Una sola línea: spinner giratorio (sin números ni %) al lado del nombre
+            if p.label:
+                lines.append(_paint(_fit(f"{p.label}  {suffix}", w - 1), _CYAN))
+            else:
+                lines.append(_paint(_fit(f"   {suffix}", w - 1), _CYAN))
+        else:
+            # Nombre + barra de progreso (2 líneas)
+            lines.append(_paint(_fit(p.label or "", w - 1), _CYAN))
+            bar_color = _COLOR_MAP.get(p.bar_color, _CYAN)
+            lines.append(_paint(_fit(suffix, w - 1), bar_color))
+
+    if len(lines) > h - 1:
+        lines = lines[: h - 1]
+
+    return lines
 
 
 def _render(force: bool = False):
@@ -378,25 +418,19 @@ def _log_msg(text: str, color: str):
         _log.append((text, color))
     if not _UI:
         _emit(_paint(text, color) if color else text)
-    # En modo UI no se muestran en pantalla (la sección compacta de
-    # completados y la barra de estado cubren la información útil).
 
 
 def info(msg: str):
     _log_msg(msg, _CYAN)
 
-
 def ok(msg: str):
     _log_msg(msg, _GREEN)
-
 
 def err(msg: str):
     _log_msg(msg, _RED)
 
-
 def warn(msg: str):
     _log_msg(msg, _YELLOW)
-
 
 def note(msg: str):
     _log_msg(msg, "")
@@ -410,7 +444,6 @@ _flash_color = "green"
 
 
 def flash(msg: str, seconds: float = 6.0, color: str = "green"):
-    """Muestra un aviso temporal bajo la barra de estado y lo borra solo."""
     global _flash, _flash_until, _flash_color
     with _lock:
         _flash = msg
@@ -436,13 +469,12 @@ def _clear_flash():
 # ── Barra de estado ───────────────────────────────────────────────────
 
 def set_session_info(member_id: str = "", authenticated: bool = True):
-    """Fija la identidad del usuario (miembro #XXX o anónimo)."""
     global _member_info
     if authenticated and member_id:
         _member_info = f"Miembro #{member_id}"
     else:
         _member_info = "Anónimo"
-    _refresh_status()
+    _render(force=True)
 
 
 def update_status(*, total: int | None = None, active: int | None = None,
@@ -470,30 +502,31 @@ def update_status(*, total: int | None = None, active: int | None = None,
     _render(force=True)
 
 
-def _refresh_status():
-    _render(force=True)
-
-
 # ── Progreso de descargas ─────────────────────────────────────────────
 
 class _Progress:
-    def __init__(self, item_id: int, label: str):
+    def __init__(self, item_id: int):
         self.item_id = item_id
-        self.label = label
-        self.bar = ""
-        self.bar_color = "cyan"
+        self.label: str | None = None       # None = "preparando descarga"
+        self.bar: str = ""
+        self.bar_color: str = "cyan"
+        self.bar_kind: str = "spinner"      # "spinner" | "bar"
+        self.message_text: str = ""
 
-    def set_label(self, label: str):
+    def set_label(self, label: str | None = None):
         with _lock:
             self.label = label
         self._show()
 
     def message(self, text: str):
+        """Mensaje de espera (temporizador TSR) junto al spinner."""
         with _lock:
-            self.bar = text
+            self.message_text = text
+            self.bar_kind = "spinner"
             self.bar_color = "gray"
             if not _UI:
-                self._emit_plain(f"{self.label} — {text}")
+                self._emit_plain(f"{self.label or ''} — {text}")
+        _start_tick()
         _render()
 
     def update(self, pct: float, downloaded: float, total: float,
@@ -502,6 +535,8 @@ class _Progress:
         with _lock:
             self.bar = bar
             self.bar_color = "cyan"
+            self.bar_kind = "bar"
+            self.message_text = ""
             if not _UI:
                 global _plain_cr
                 _plain_cr = True
@@ -516,8 +551,9 @@ class _Progress:
         _emit(text, end)
 
 
-def start_progress(item_id: int, label: str) -> _Progress:
-    p = _Progress(item_id, label)
+def start_progress(item_id: int, label: str | None = None) -> _Progress:
+    p = _Progress(item_id)
+    p.label = label                          # None = spinner "preparando" sin nombre
     with _lock:
         _active[item_id] = p
     _render(force=True)
@@ -525,11 +561,6 @@ def start_progress(item_id: int, label: str) -> _Progress:
 
 
 def finish_progress(item_id: int, name: str, color: str = "green"):
-    """Finaliza (y elimina) una descarga activa, añadiéndola a la fila compacta.
-
-    name: texto corto para el header (nombre de archivo o identificación).
-    color: \"green\" (éxito) o \"red\" (error).
-    """
     global _plain_cr
     with _lock:
         _active.pop(item_id, None)
@@ -544,14 +575,17 @@ def finish_progress(item_id: int, name: str, color: str = "green"):
             verb = "Error:" if color == "red" else "Guardado:"
             text = f"{ic}{verb} {name}"
             _emit(_paint(text, c) if c else text)
+
+    if not any(p.bar_kind == "spinner" for p in _active.values()):
+        _stop_tick()
     _render(force=True)
 
 
 # ── Cierre ────────────────────────────────────────────────────────────
 
 def shutdown(success: int, failed: int, last: str):
-    """Desactiva el marco y muestra el resumen final en la terminal."""
     global _UI
+    _stop_tick()
     _UI = False
     w = shutil.get_terminal_size().columns
     sep = "─" * max(1, min(w - 2, 62))

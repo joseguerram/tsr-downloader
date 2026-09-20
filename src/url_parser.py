@@ -43,7 +43,7 @@ def is_vip_exclusive(item_id: int) -> bool:
     url = get_details_url(item_id)
     logger.debug(f"[url_parser] is_vip_exclusive: GET {url}")
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=5)
         logger.debug(f"[url_parser] is_vip_exclusive: status={r.status_code}, length={len(r.text)}")
         result = "VIP Exclusive" in r.text
         logger.debug(f"[url_parser] is_vip_exclusive({item_id}) = {result}")
@@ -57,7 +57,7 @@ def get_required_items(item_id: int) -> list[int]:
     url = f"https://www.thesimsresource.com/downloads/{item_id}"
     logger.debug(f"[url_parser] get_required_items: GET {url}")
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=5)
         logger.debug(f"[url_parser] get_required_items: status={r.status_code}, length={len(r.text)}")
         items = [
             int(m)

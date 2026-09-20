@@ -341,15 +341,18 @@ def _fit(text: str, width: int) -> str:
 
 
 def _build_renderable():
-    """Compone el marco completo: estado, separador, activos y completados.
+    """Compone el marco completo: estado, separador, activos, completados y
+    avisos recientes al pie.
 
     Estado y separador van a ancho completo; los activos/completados viven
     en una tabla de dos columnas (nombre a la izquierda, barra o icono a la
-    derecha). Devuelve algo renderizable para Rich (Group o Text vacío).
+    derecha). Los avisos se reservan espacio abajo para dar feedback
+    inmediato al copiar una URL. Devuelve algo renderizable (Group/Text).
     """
     w = _console.width if _console is not None else 80
     h = _console.height if _console is not None else 24
 
+    msgs = list(_log)[-3:] if _log else []
     parts = []
 
     # ── 1. Barra de estado (siempre arriba, ancho completo) ──────────
@@ -357,7 +360,7 @@ def _build_renderable():
         parts.append(Text(_fit(_status, w - 1), style="bold cyan"))
 
     # ── 2. Tabla con separador, activos y completados ────────────────
-    if _active or _completed:
+    if _active or _completed or msgs:
         parts.append(Text("━" * min(w - 4, 62), style="dim"))
 
         t = Table(
@@ -370,7 +373,8 @@ def _build_renderable():
         t.add_column(ratio=1, justify="left", overflow="ellipsis", no_wrap=True)
         t.add_column(justify="right", overflow="ellipsis", no_wrap=True)
 
-        remaining = h - 1 - len(parts)
+        # Los avisos se reservan abajo: el feedback gana a los completados
+        remaining = h - 1 - len(parts) - len(msgs)
         if remaining > 0:
             for p in list(_active.values()):
                 if remaining <= 0:
@@ -393,6 +397,10 @@ def _build_renderable():
                 remaining -= 1
 
         parts.append(t)
+
+    # ── 3. Avisos recientes (feedback al pie, atenuado) ──────────────
+    for text, color in msgs:
+        parts.append(Text(_fit(text, w - 1), style=(_STYLES.get(color) or "dim")))
 
     if not parts:
         return Text("")

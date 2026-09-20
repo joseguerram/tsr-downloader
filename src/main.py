@@ -267,7 +267,7 @@ def main():
             for iid in to_start:
                 executor.submit(_do_download, iid)
 
-            time.sleep(0.2)
+            time.sleep(0.1)
     except KeyboardInterrupt:
         logger.info("Cerrando…")
     finally:

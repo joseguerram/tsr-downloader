@@ -13,7 +13,7 @@ Descarga contenido de The Sims Resource copiando enlaces. La aplicación supervi
 
 ## Requisitos
 
-- Solo **Python 3.10 o superior**. Sin dependencias externas.
+- **Python 3.10 o superior**.
 - Cuenta gratuita en The Sims Resource.
 
 ## Instalación y uso
@@ -77,6 +77,25 @@ Luego edita `config.json` (en la raíz del proyecto):
 
 Se guardan en la carpeta configurada (por defecto, `./downloads/`).
 
+## Interfaz
+
+La aplicación usa una interfaz TUI basada en Textual con tema cyberpunk:
+
+- **TSR Downloader** en magenta/rosado en la primera línea.
+- Contadores en cian sobre fondo azul oscuro.
+- Cada descarga ocupa una fila permanente con barra de progreso en cian.
+- Spinners animados durante la descarga.
+- Bordes sutiles que separan las secciones de avisos y descargas.
+
+### Atajos de teclado
+
+| Tecla | Acción |
+|-------|--------|
+| `q` | Cerrar la aplicación |
+| `Ctrl+C` | Cerrar la aplicación |
+
+Al cerrar se muestra un resumen con el número de descargas completadas y fallidas.
+
 ## Estructura del proyecto
 
 ```
@@ -87,7 +106,7 @@ tsr-downloader/
 │   ├── downloader.py    ← Descarga con reanudación y grupo de hilos
 │   ├── url_parser.py    ← Análisis y validación de URL
 │   ├── config.py        ← Rutas y carga de la configuración
-│   └── display.py       ← Interfaz de consola (colores y progreso)
+│   └── display.py       ← Interfaz TUI (Textual, tema cyberpunk)
 ├── run.py               ← Entrada universal: setup, run, clean, help
 ├── config.json.example  ← Plantilla de configuración (se sube a Git)
 ├── .gitignore

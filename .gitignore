@@ -1,0 +1,20 @@
+# Datos personales (no se suben)
+config.json
+
+# Sesión y estado
+session.json
+history.json
+
+# Logs y descargas
+logs.log
+downloads/
+
+# Herramientas locales y copias de seguridad
+.agents/
+skills-lock.json
+tsr-downloader.zip
+
+# Entorno virtual y caché de Python
+.venv/
+__pycache__/
+*.pyc

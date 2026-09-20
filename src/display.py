@@ -552,7 +552,8 @@ def finish_progress(item_id: int, name: str, color: str = "green"):
         _active.pop(item_id, None)
         style = _STYLES.get(color, "green")
         ic = icon("error") if color == "red" else icon("ok")
-        _completed.insert(0, (ic, name, style))
+        # Nuevos abajo: la lista se apila en orden cronológico
+        _completed.append((ic, name, style))
 
         if not _UI:
             if _plain_cr:

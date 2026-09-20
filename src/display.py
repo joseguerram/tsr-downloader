@@ -369,16 +369,6 @@ def _build_renderable():
     if _active or _completed or msgs:
         parts.append(Text("━" * min(w - 4, 62), style="dim"))
 
-        t = Table(
-            show_header=False,
-            show_edge=False,
-            box=None,
-            padding=(0, 0),
-            expand=True,
-        )
-        t.add_column(ratio=1, justify="left", overflow="ellipsis", no_wrap=True)
-        t.add_column(justify="right", overflow="ellipsis", no_wrap=True)
-
         remaining = h - 1 - len(parts)
         if remaining > 0:
             # Una sola secuencia: cada fila conserva su posición original.
@@ -396,16 +386,24 @@ def _build_renderable():
                             right.append(f"  {p.message_text}", style="dim")
                     else:
                         right = Text(p.bar, style="cyan")
-                    t.add_row(label, right)
+                    row = Table(show_header=False, show_edge=False, box=None,
+                                padding=(0, 0), expand=True)
+                    row.add_column(ratio=1, justify="left", overflow="ellipsis", no_wrap=True)
+                    row.add_column(justify="right", overflow="ellipsis", no_wrap=True)
+                    row.add_row(label, right)
+                    parts.append(row)
                 elif completed is not None:
                     ic, name, style = completed
                     # Completado: el icono sustituye al de descarga.
-                    t.add_row(Text(f"{ic} {name}", style=style), "")
+                    row = Table(show_header=False, show_edge=False, box=None,
+                                padding=(0, 0), expand=True)
+                    row.add_column(ratio=1, justify="left", overflow="ellipsis", no_wrap=True)
+                    row.add_column(justify="right", overflow="ellipsis", no_wrap=True)
+                    row.add_row(Text(f"{ic} {name}", style=style), "")
+                    parts.append(row)
                 else:
                     continue
                 remaining -= 1
-
-        parts.append(t)
 
     if not parts:
         return Text("")

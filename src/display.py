@@ -328,6 +328,9 @@ def _stop_tick():
 
 # ── Marco ─────────────────────────────────────────────────────────────
 
+_last_render = 0.0
+
+
 def _fit(text: str, width: int) -> str:
     """Recorta un texto añadiendo '…' si excede el ancho (ancho fijo)."""
     if width <= 0:
@@ -396,9 +399,14 @@ def _build_renderable():
 
 
 def _render(force: bool = False):
+    """Actualiza el marco en pantalla (con throttle salvo en forcings)."""
     if not _UI:
         return
-    global _live_active
+    global _live_active, _last_render
+    now = time.monotonic()
+    if not force and now - _last_render < 0.1:
+        return
+    _last_render = now
     with _lock:
         try:
             if _live is None:
@@ -406,7 +414,8 @@ def _render(force: bool = False):
             if not _live_active:
                 _live.start()
                 _live_active = True
-            _live.update(_build_renderable())
+            # Rich no pinta con solo update(): hay que forzar el refresh.
+            _live.update(_build_renderable(), refresh=True)
         except Exception:
             pass
 

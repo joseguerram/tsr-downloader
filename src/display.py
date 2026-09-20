@@ -151,7 +151,6 @@ class TSRApp(App[None]):
         max-height: 4;
         color: #8792aa;
         padding: 0 1;
-        border-left: solid #553b78;
     }
     #downloads {
         height: 1fr;

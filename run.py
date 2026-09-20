@@ -60,7 +60,6 @@ def run():
     if not os.path.exists(PYTHON):
         print("Entorno no preparado. Ejecutando setup automático...")
         setup()
-    print("==> TSR Downloader")
     try:
         proc = subprocess.run([PYTHON, "-m", "src.main"], cwd=ROOT)
     except KeyboardInterrupt:

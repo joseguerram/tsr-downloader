@@ -588,7 +588,7 @@ def finish_duplicate(item_id: int, name: str):
     with _lock:
         # Cada detección ocupa una fila propia, aunque el item ya tenga
         # otras filas anteriores en esta sesión.
-        _completed[row_id] = (icon("ok").strip() or "✓", name, "green")
+        _completed[row_id] = (icon("dup").strip() or "~", name, "dim")
         _display_order.append(row_id)
     _render(force=True)
 

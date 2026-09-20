@@ -39,6 +39,7 @@ _lock = threading.RLock()
 _status = ""
 _log: deque = deque(maxlen=200)
 _active: dict[int, "_Progress"] = {}
+_completed: list[tuple[str, str, str]] = []   # (icono, nombre, color) — una línea cada uno
 _session_ok = 0
 _session_failed = 0
 _member_info = ""
@@ -342,29 +343,27 @@ def _build_frame() -> list:
             txt = txt[: w - 1] + "…"
         lines.append(_paint(txt, _BOLD))
 
-    # ── 1b. Aviso temporal ───────────────────────────────────────────
-    if _flash and time.monotonic() < _flash_until:
-        lines.append(_paint(_fit(_flash, w - 1), _COLOR_MAP.get(_flash_color, _GREEN)))
-
-    # ── 2. Separador (si hay activos) ───────────────────────────────
-    if active_items:
+    # ── 2. Separador (si hay actividad) ──────────────────────────────
+    if active_items or _completed:
         lines.append(_paint("━" * max(1, min(w - 1, 62)), _GRAY))
 
-    # ── 4. Descargas activas ────────────────────────────────────────
+    # ── 3. Descargas activas (una línea cada una) ────────────────────
     for p in active_items:
-        suffix = _get_bar_text(p, w)
+        label = p.label or ""
+        body = _get_bar_text(p, w)
 
         if p.bar_kind == "spinner":
-            # Una sola línea: spinner giratorio (sin números ni %) al lado del nombre
-            if p.label:
-                lines.append(_paint(_fit(f"{p.label}  {suffix}", w - 1), _CYAN))
-            else:
-                lines.append(_paint(_fit(f"   {suffix}", w - 1), _CYAN))
+            # "↓ nombre  ◜  Esperando 12s…" · spinner centrado sin nombre
+            line = f"{label}  {body}" if label else f"   {body}"
         else:
-            # Nombre + barra de progreso (2 líneas)
-            lines.append(_paint(_fit(p.label or "", w - 1), _CYAN))
-            bar_color = _COLOR_MAP.get(p.bar_color, _CYAN)
-            lines.append(_paint(_fit(suffix, w - 1), bar_color))
+            # "↓ nombre  ████░░░░  62%  7.4/11.9 MB  2.1 MB/s  ETA 3s" (una línea)
+            line = f"{label}  {body}" if label else body
+
+        lines.append(_paint(_fit(line, w - 1), _CYAN))
+
+    # ── 4. Completados (una línea cada uno, al pie) ─────────────────
+    for ic, name, color in _completed:
+        lines.append(_paint(_fit(f"{ic} {name}", w - 1), color))
 
     if len(lines) > h - 1:
         lines = lines[: h - 1]
@@ -412,36 +411,6 @@ def warn(msg: str):
 
 def note(msg: str):
     _log_msg(msg, "")
-
-
-# ── Aviso temporal ────────────────────────────────────────────────────
-
-_flash = ""
-_flash_until = 0.0
-_flash_color = "green"
-
-
-def flash(msg: str, seconds: float = 6.0, color: str = "green"):
-    global _flash, _flash_until, _flash_color
-    with _lock:
-        _flash = msg
-        _flash_until = time.monotonic() + seconds
-        _flash_color = color
-        if not _UI:
-            c = _COLOR_MAP.get(color)
-            _emit(_paint(msg, c) if c else msg)
-    _render(force=True)
-    t = threading.Timer(seconds, _clear_flash)
-    t.daemon = True
-    t.start()
-
-
-def _clear_flash():
-    global _flash
-    with _lock:
-        if _flash:
-            _flash = ""
-    _render(force=True)
 
 
 # ── Barra de estado ───────────────────────────────────────────────────
@@ -544,6 +513,7 @@ def finish_progress(item_id: int, name: str, color: str = "green"):
         _active.pop(item_id, None)
         c = _COLOR_MAP.get(color, _GREEN)
         ic = icon("error") if color == "red" else icon("ok")
+        _completed.insert(0, (ic.strip() or "·", name, c))
 
         if not _UI:
             if _plain_cr:

@@ -128,8 +128,6 @@ def on_download_done(item_id: int, filename: str, error: Exception | None):
         display.finish_progress(item_id, filename)
 
     _refresh_status()
-    if not active and not queue:
-        display.flash("✓ Todas las descargas completadas")
 
 
 def _do_download(item_id: int):

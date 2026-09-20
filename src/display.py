@@ -63,8 +63,8 @@ _lock = threading.RLock()
 _status = ""
 _log: deque = deque(maxlen=200)
 _active: dict[int, "_Progress"] = {}
-_completed: dict[int, tuple[str, str, str]] = {}  # item_id → (icono, nombre, estilo)
-_display_order: list[int] = []               # orden permanente de las filas
+_completed: dict[object, tuple[str, str, str]] = {}  # fila → (icono, nombre, estilo)
+_display_order: list[object] = []             # orden permanente de las filas
 _session_ok = 0
 _session_failed = 0
 _member_info = ""
@@ -583,12 +583,13 @@ def finish_progress(item_id: int, name: str, color: str = "green"):
 
 
 def finish_duplicate(item_id: int, name: str):
-    """Añade un item ya descargado a la secuencia, sin consultar la red."""
+    """Añade una nueva copia de un item ya descargado a la secuencia."""
+    row_id = ("duplicate", item_id, time.monotonic_ns())
     with _lock:
-        _active.pop(item_id, None)
-        _completed[item_id] = (icon("dup").strip() or "~", name, "dim")
-        if item_id not in _display_order:
-            _display_order.append(item_id)
+        # Cada detección ocupa una fila propia, aunque el item ya tenga
+        # otras filas anteriores en esta sesión.
+        _completed[row_id] = (icon("ok").strip() or "✓", name, "green")
+        _display_order.append(row_id)
     _render(force=True)
 
 

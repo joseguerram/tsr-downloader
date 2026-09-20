@@ -190,17 +190,15 @@ def process_url(text: str):
 
         # Ya fue descargado anteriormente
         if item_id in _history_ids():
-            if item_id not in _notified:
-                _notified.add(item_id)
-                entry = next(
-                    (item for item in history if item["item_id"] == item_id),
-                    None,
-                )
-                name = entry.get("filename", f"Item {item_id}") if entry else f"Item {item_id}"
-                display.finish_duplicate(
-                    item_id,
-                    f"{name} — ya fue descargado anteriormente",
-                )
+            entry = next(
+                (item for item in history if item["item_id"] == item_id),
+                None,
+            )
+            name = entry.get("filename", f"Item {item_id}") if entry else f"Item {item_id}"
+            display.finish_duplicate(
+                item_id,
+                f"{name} — ya fue descargado anteriormente",
+            )
             return
 
         # Crear la fila inmediatamente. Las comprobaciones de VIP y

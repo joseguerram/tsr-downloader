@@ -356,7 +356,13 @@ def _build_renderable():
     msgs = list(_log)[-3:] if _log else []
     parts = []
 
-    # ── 1. Barra de estado (siempre arriba, ancho completo) ──────────
+    # ── 1. Identidad del programa (arriba) ───────────────────────────
+    identity = "TSR Downloader"
+    if _member_info:
+        identity += f" · {_member_info}"
+    parts.append(Text(_fit(identity, w - 1), style="bold cyan"))
+
+    # ── 2. Información de estado (segunda línea) ─────────────────────
     if _status:
         parts.append(Text(_fit(_status, w - 1), style="bold cyan"))
 
@@ -365,7 +371,7 @@ def _build_renderable():
     for text, color in msgs:
         parts.append(Text(_fit(text, w - 1), style=(_STYLES.get(color) or "dim")))
 
-    # ── 2. Tabla con separador, activos y completados ────────────────
+    # ── 3. Tabla con separador, activos y completados ────────────────
     if _active or _completed or msgs:
         parts.append(Text("━" * min(w - 4, 62), style="dim"))
 
@@ -475,9 +481,7 @@ def update_status(*, total: int | None = None, active: int | None = None,
     if total is not None:
         _total_files = total
 
-    parts = ["TSR Downloader"]
-    if _member_info:
-        parts[0] = f"TSR Downloader · {_member_info}"
+    parts = []
     parts.append(f"Total: {_total_files}")
     if ok_count is not None:
         parts.append(f"Descargados: {ok_count}")

@@ -11,15 +11,48 @@ Descarga contenido de The Sims Resource copiando enlaces. La aplicación supervi
 - **Reanudación** — retoma las descargas interrumpidas desde donde quedaron.
 - **Dependencias** — descarga automáticamente los archivos requeridos.
 
+## Requisitos
+
+- Solo **Python 3.10 o superior**. No necesitas `make` ni nada más.
+- Cuenta gratuita en The Sims Resource.
+
+## Instalación y uso
+
+La entrada universal es `run.py` — funciona en Linux, macOS y Windows, solo con Python:
+
+```sh
+python run.py setup    # crea .venv, instala dependencias y genera config.json si falta
+python run.py          # ejecuta la aplicación (hace setup automático si falta todo)
+```
+
+`python run.py` basta en una máquina nueva: se autoprepara la primera vez. Otros comandos:
+
+```sh
+python run.py run      # igual que 'python run.py'
+python run.py clean    # elimina .venv y archivos temporales (no toca config.json ni descargas)
+python run.py help     # muestra la ayuda
+```
+
+Si tu sistema tiene `make`, puedes usar los atajos equivalentes (llaman al mismo `run.py`):
+
+```sh
+make setup
+make run
+make clean
+make help
+```
+
+> **Si mueves el repositorio a otra máquina:** el `.venv` es específico de cada equipo (contiene rutas absolutas). Ejecuta `python run.py` o `python run.py setup` una vez en la máquina nueva; se recreará todo el entorno. `config.json` se regenera desde la plantilla si falta.
+
 ## Configuración
 
-Copia la plantilla y edita el archivo resultante:
+La primera vez que ejecutes `python run.py setup` se genera `config.json` a partir de `config.json.example` automáticamente. Si lo prefieres, cópialo a mano:
 
 ```sh
 cp config.json.example config.json
 ```
 
-En Windows:
+En Windows (cmd):
 
 ```bat
 copy config.json.example config.json
@@ -44,23 +77,9 @@ Luego edita `config.json` (en la raíz del proyecto):
 
 **Iconos (Nerd Font):** la aplicación detecta automáticamente si tu terminal usa una fuente Nerd Font (p. ej. JetBrainsMono Nerd Font). Si la encuentra, muestra iconos de esa fuente; si no, usa símbolos Unicode estándar (↓, ✓, ✗). Pon `use_nerd_icons` en `false` para desactivar los iconos por completo.
 
-## Instalación
-
-```sh
-make setup    # crea el venv, instala dependencias y genera config.json si falta
-```
-
-`make setup` crea `config.json` a partir de `config.json.example` automáticamente si no existe. Después edítalo con tu cuenta y ejecuta:
-
-```sh
-make run      # ejecuta la aplicación
-```
-
-En Windows nativo usa **Git Bash** o **WSL** para que `make` esté disponible.
-
 ## Uso
 
-1. Ejecuta `make run`.
+1. Ejecuta `python run.py` (o `make run`).
 2. Abre The Sims Resource en el navegador.
 3. Copia enlaces de descarga.
 4. Los archivos se descargan solos.
@@ -78,7 +97,8 @@ tsr-downloader/
 │   ├── url_parser.py    ← Análisis y validación de URL
 │   ├── config.py        ← Rutas y carga de la configuración
 │   └── display.py       ← Interfaz de consola (colores y progreso)
-├── Makefile             ← make setup / make run / make clean / make help
+├── run.py               ← Entrada universal (setup / run / clean / help) — no requiere make
+├── Makefile             ← Atajo opcional para quienes tengan make
 ├── config.json.example  ← Plantilla de configuración (se sube a Git)
 ├── .gitignore
 ├── .venv/
@@ -87,8 +107,3 @@ tsr-downloader/
 ```
 
 > `config.json`, `session.json`, `history.json` y `logs.log` se generan en la raíz y no se suben a Git.
-
-## Requisitos
-
-- Python 3.10 o superior.
-- Cuenta gratuita en The Sims Resource.

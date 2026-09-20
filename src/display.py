@@ -360,7 +360,7 @@ def _build_renderable():
     identity = "TSR Downloader"
     if _member_info:
         identity += f" · {_member_info}"
-    parts.append(Text(_fit(identity, w - 1), style="bold cyan"))
+    parts.append(Text(_fit(identity, w - 1), style="bold yellow"))
 
     # ── 2. Información de estado (segunda línea) ─────────────────────
     if _status:

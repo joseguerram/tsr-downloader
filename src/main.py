@@ -94,7 +94,6 @@ def _refresh_status():
         total=_total_files,
         active=len(active),
         queue=len(queue),
-        last=_last_file,
         ok_count=_session_ok,
         failed=_session_failed,
     )

@@ -1,8 +1,12 @@
-"""Capa de visualización para la consola de TSR Downloader.
+"""Capa de visualización para la consola de TSR Downloader (Rich).
 
-Genera una interfaz con barra de estado superior, mensajes con color y
-barras de progreso en vivo. Detecta automáticamente Nerd Fonts y soporte
-ANSI; si no están disponibles, degrada a Unicode o a texto plano.
+Renderiza un marco vivo con Rich (Live + Table): barra de estado superior,
+descargas activas con el nombre fijo a la izquierda y barra de progreso /
+spinner / icono de resultado a la derecha, y los completados al pie con su
+icono alineado a la derecha.
+
+El ancho del área derecha es permanente: solo cambia su contenido
+(spinner → barra → ✓/✗). En terminales sin TTY degrada a texto plano.
 """
 
 import os
@@ -12,7 +16,12 @@ import shutil
 import threading
 from collections import deque
 
-# ── Secuencias ANSI ────────────────────────────────────────────────────
+from rich.console import Console, Group
+from rich.live import Live
+from rich.table import Table
+from rich.text import Text
+
+# ── Secuencias ANSI (modo texto plano, sin TTY) ────────────────────────
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
 _DIM = "\033[2m"
@@ -22,44 +31,53 @@ _YELLOW = "\033[33m"
 _CYAN = "\033[36m"
 _GRAY = "\033[90m"
 
+# ── Estilos para Rich (nombres → estilos declarativos) ─────────────────
+_STYLES = {
+    "green": "green",
+    "red": "red",
+    "yellow": "yellow",
+    "cyan": "cyan",
+    "gray": "dim",
+}
+_ANSI = {
+    "green": _GREEN,
+    "red": _RED,
+    "yellow": _YELLOW,
+    "cyan": _CYAN,
+    "gray": _GRAY,
+}
+
 # ── Animación spinner (giratorio, distinto a la barra) ─────────────────
 _SPINNERS = ["◜", "◝", "◞", "◟"]
-_spin_idx = 0
 
 # ── Estado global ──────────────────────────────────────────────────────
-_COLORS = True
 _UI = False
-_last_render = 0.0
+_COLORS = True
 _mode = "unicode"
-_plain_cr = False
-_tick_timer: threading.Timer | None = None
+_console: Console | None = None
+_live: Live | None = None
+_live_active = False
 
 _lock = threading.RLock()
 
 _status = ""
 _log: deque = deque(maxlen=200)
 _active: dict[int, "_Progress"] = {}
-_completed: list[tuple[str, str, str]] = []   # (icono, nombre, color) — una línea cada uno
+_completed: list[tuple[str, str, str]] = []   # (icono, nombre, estilo)
 _session_ok = 0
 _session_failed = 0
 _member_info = ""
 _total_files = 0
+_plain_cr = False                          # modo plano: barra impresa con \r
 
 _ICON_SETS = {
-    "download": ("\uf019 ", "↓ ", "  "),
-    "ok":       ("\uf00c ", "✓ ", "✓ "),
-    "error":    ("\uf00d ", "✗ ", "✗ "),
-    "queue":    ("\uf017 ", "… ", "> "),
-    "vip":      ("\uf023 ", "■ ", "! "),
-    "dup":      ("\uf0c7 ", "~ ", "- "),
-    "new":      ("\uf067 ", "+ ", "+ "),
-}
-_COLOR_MAP = {
-    "green": _GREEN,
-    "red": _RED,
-    "yellow": _YELLOW,
-    "cyan": _CYAN,
-    "gray": _GRAY,
+    "download": ("\uf019", "↓", " "),
+    "ok":       ("\uf00c", "✓", "✓"),
+    "error":    ("\uf00d", "✗", "✗"),
+    "queue":    ("\uf017", "…", ">"),
+    "vip":      ("\uf023", "■", "!"),
+    "dup":      ("\uf0c7", "~", "-"),
+    "new":      ("\uf067", "+", "+"),
 }
 
 
@@ -194,26 +212,16 @@ def _enable_windows_vt() -> bool:
 # ── Inicialización ────────────────────────────────────────────────────
 
 def init(nerd_requested: bool = True):
-    global _COLORS, _UI, _mode
+    global _UI, _COLORS, _mode, _console, _live
 
     is_tty = sys.stdout.isatty()
-
-    if not is_tty:
-        _COLORS = False
-        _UI = False
-    elif os.name == "nt":
-        vt_ok = _enable_windows_vt()
-        if vt_ok:
-            _UI = True
-        else:
-            try:
-                import colorama
-                colorama.init()
-            except ImportError:
-                _COLORS = False
-            _UI = False
-    else:
+    _COLORS = is_tty
+    if is_tty:
+        if os.name == "nt":
+            _enable_windows_vt()
         _UI = True
+    else:
+        _UI = False
 
     if nerd_requested:
         if _nerd_font_windows() or _nerd_font_probe():
@@ -222,6 +230,15 @@ def init(nerd_requested: bool = True):
             _mode = "unicode"
     else:
         _mode = "none"
+
+    _console = Console(highlight=False)
+    if _UI:
+        _live = Live(
+            console=_console,
+            screen=False,
+            auto_refresh=False,
+            vertical_overflow="visible",
+        )
 
 
 def icon(name: str) -> str:
@@ -241,12 +258,14 @@ def _paint(text: str, color: str) -> str:
     return f"{color}{text}{_RESET}"
 
 
-def _fit(text: str, width: int) -> str:
-    if width <= 3:
-        return text[: max(0, width)]
-    if len(text) <= width:
-        return text
-    return text[: width - 1] + "…"
+def _emit(text: str, end: str = "\n"):
+    sys.stdout.write(text + end)
+    sys.stdout.flush()
+
+
+def _spin_glyph() -> str:
+    """Glifo del spinner según el tiempo (anima sin temporizador por frame)."""
+    return _SPINNERS[int(time.monotonic() * 3) % len(_SPINNERS)]
 
 
 def format_bytes(n: float) -> str:
@@ -276,17 +295,19 @@ def build_bar(pct: float, width: int = 24) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
-# ── Animación spinner ─────────────────────────────────────────────────
+# ── Animación spinner (temporizador solo mientras haya spinners) ──────
+
+_tick_timer: threading.Timer | None = None
+
 
 def _start_tick():
-    """Arranca el temporizador que anima los spinners (si no corre ya)."""
+    """Arranca el temporizador que re-renderiza mientras haya spinners."""
     global _tick_timer
     if _tick_timer is not None:
         return
 
     def _do_tick():
-        global _tick_timer, _spin_idx
-        _spin_idx += 1
+        global _tick_timer
         if any(p.bar_kind == "spinner" for p in _active.values()):
             _render(force=True)
             _tick_timer = threading.Timer(0.35, _do_tick)
@@ -305,85 +326,87 @@ def _stop_tick():
     _tick_timer = None
 
 
-# ── Salida ────────────────────────────────────────────────────────────
-
-def _emit(text: str, end: str = "\n"):
-    sys.stdout.write(text + end)
-    sys.stdout.flush()
-
-
 # ── Marco ─────────────────────────────────────────────────────────────
 
-def _get_bar_text(p: "_Progress", width: int) -> str:
-    """Texto de barra/spinner de un progreso activo (sin contar el label)."""
-    if p.bar_kind == "bar":
-        return p.bar
-
-    spin = _SPINNERS[_spin_idx % len(_SPINNERS)]
-
-    if p.message_text:
-        msg = p.message_text
-        if _COLORS:
-            return f"{spin}  {_DIM}{msg}{_RESET}"
-        return f"{spin}  {msg}"
-
-    return spin
+def _fit(text: str, width: int) -> str:
+    """Recorta un texto añadiendo '…' si excede el ancho (ancho fijo)."""
+    if width <= 0:
+        return ""
+    if len(text) <= width:
+        return text
+    return text[: width - 1] + "…"
 
 
-def _build_frame() -> list:
-    w = shutil.get_terminal_size().columns
-    h = shutil.get_terminal_size().lines
-    active_items = list(_active.values())
-    lines: list[str] = []
+def _build_renderable():
+    """Compone el marco completo: estado, separador, activos y completados.
 
-    # ── 1. Barra de estado (siempre arriba) ──────────────────────────
+    Estado y separador van a ancho completo; los activos/completados viven
+    en una tabla de dos columnas (nombre a la izquierda, barra o icono a la
+    derecha). Devuelve algo renderizable para Rich (Group o Text vacío).
+    """
+    w = _console.width if _console is not None else 80
+    h = _console.height if _console is not None else 24
+
+    parts = []
+
+    # ── 1. Barra de estado (siempre arriba, ancho completo) ──────────
     if _status:
-        txt = _status
-        if len(txt) > w - 1:
-            txt = txt[: w - 1] + "…"
-        lines.append(_paint(txt, _BOLD))
+        parts.append(Text(_fit(_status, w - 1), style="bold cyan"))
 
-    # ── 2. Separador (si hay actividad) ──────────────────────────────
-    if active_items or _completed:
-        lines.append(_paint("━" * max(1, min(w - 1, 62)), _GRAY))
+    # ── 2. Tabla con separador, activos y completados ────────────────
+    if _active or _completed:
+        parts.append(Text("━" * min(w - 4, 62), style="dim"))
 
-    # ── 3. Descargas activas (una línea cada una) ────────────────────
-    for p in active_items:
-        label = p.label or ""
-        body = _get_bar_text(p, w)
+        t = Table(
+            show_header=False,
+            show_edge=False,
+            box=None,
+            padding=(0, 1),
+            expand=True,
+        )
+        t.add_column(ratio=1, justify="left", overflow="ellipsis", no_wrap=True)
+        t.add_column(justify="right", overflow="ellipsis", no_wrap=True)
 
-        if p.bar_kind == "spinner":
-            # "↓ nombre  ◜  Esperando 12s…" · spinner centrado sin nombre
-            line = f"{label}  {body}" if label else f"   {body}"
-        else:
-            # "↓ nombre  ████░░░░  62%  7.4/11.9 MB  2.1 MB/s  ETA 3s" (una línea)
-            line = f"{label}  {body}" if label else body
+        remaining = h - 1 - len(parts)
+        if remaining > 0:
+            for p in list(_active.values()):
+                if remaining <= 0:
+                    break
+                label = Text(p.label or " ", style="bold")
+                if p.bar_kind == "spinner":
+                    right = Text(_spin_glyph(), style="bold magenta")
+                    if p.message_text:
+                        right.append(f"  {p.message_text}", style="dim")
+                else:
+                    right = Text(p.bar, style="cyan")
+                t.add_row(label, right)
+                remaining -= 1
 
-        lines.append(_paint(_fit(line, w - 1), _CYAN))
+            for ic, name, style in _completed:
+                if remaining <= 0:
+                    break
+                t.add_row(Text(name, style=style), Text(ic, style=style))
+                remaining -= 1
 
-    # ── 4. Completados (una línea cada uno, al pie) ─────────────────
-    for ic, name, color in _completed:
-        lines.append(_paint(_fit(f"{ic} {name}", w - 1), color))
+        parts.append(t)
 
-    if len(lines) > h - 1:
-        lines = lines[: h - 1]
-
-    return lines
+    if not parts:
+        return Text("")
+    return Group(*parts)
 
 
 def _render(force: bool = False):
-    global _last_render
     if not _UI:
         return
-    now = time.monotonic()
-    if not force and now - _last_render < 0.1:
-        return
+    global _live_active
     with _lock:
-        _last_render = now
         try:
-            lines = _build_frame()
-            sys.stdout.write("\033[H" + "\n".join(lines) + "\033[J")
-            sys.stdout.flush()
+            if _live is None:
+                return
+            if not _live_active:
+                _live.start()
+                _live_active = True
+            _live.update(_build_renderable())
         except Exception:
             pass
 
@@ -394,20 +417,20 @@ def _log_msg(text: str, color: str):
     with _lock:
         _log.append((text, color))
     if not _UI:
-        _emit(_paint(text, color) if color else text)
+        _emit(_paint(text, _ANSI.get(color, "")) if color else text)
 
 
 def info(msg: str):
-    _log_msg(msg, _CYAN)
+    _log_msg(msg, "cyan")
 
 def ok(msg: str):
-    _log_msg(msg, _GREEN)
+    _log_msg(msg, "green")
 
 def err(msg: str):
-    _log_msg(msg, _RED)
+    _log_msg(msg, "red")
 
 def warn(msg: str):
-    _log_msg(msg, _YELLOW)
+    _log_msg(msg, "yellow")
 
 def note(msg: str):
     _log_msg(msg, "")
@@ -425,7 +448,7 @@ def set_session_info(member_id: str = "", authenticated: bool = True):
 
 
 def update_status(*, total: int | None = None, active: int | None = None,
-                  queue: int | None = None, last: str | None = None,
+                  queue: int | None = None,
                   ok_count: int | None = None, failed: int | None = None):
     global _status, _total_files
     if total is not None:
@@ -443,8 +466,6 @@ def update_status(*, total: int | None = None, active: int | None = None,
         parts.append(f"Descargando: {active}")
     if queue is not None:
         parts.append(f"Cola: {queue}")
-    if last:
-        parts.append(f"Último: {last}")
     _status = " | ".join(parts)
     _render(force=True)
 
@@ -456,7 +477,6 @@ class _Progress:
         self.item_id = item_id
         self.label: str | None = None       # None = "preparando descarga"
         self.bar: str = ""
-        self.bar_color: str = "cyan"
         self.bar_kind: str = "spinner"      # "spinner" | "bar"
         self.message_text: str = ""
 
@@ -470,7 +490,6 @@ class _Progress:
         with _lock:
             self.message_text = text
             self.bar_kind = "spinner"
-            self.bar_color = "gray"
             if not _UI:
                 self._emit_plain(f"{self.label or ''} — {text}")
         _start_tick()
@@ -478,10 +497,11 @@ class _Progress:
 
     def update(self, pct: float, downloaded: float, total: float,
                speed: float, eta: float):
-        bar = f"{build_bar(pct)} {pct:3.0f}%  {format_bytes(downloaded)}/{format_bytes(total)}  {format_speed(speed)}  ETA {format_eta(eta)}"
+        bar = (f"{build_bar(pct)} {pct:3.0f}%  "
+               f"{format_bytes(downloaded)}/{format_bytes(total)}  "
+               f"{format_speed(speed)}  ETA {format_eta(eta)}")
         with _lock:
             self.bar = bar
-            self.bar_color = "cyan"
             self.bar_kind = "bar"
             self.message_text = ""
             if not _UI:
@@ -503,6 +523,7 @@ def start_progress(item_id: int, label: str | None = None) -> _Progress:
     p.label = label                          # None = spinner "preparando" sin nombre
     with _lock:
         _active[item_id] = p
+    _start_tick()
     _render(force=True)
     return p
 
@@ -511,17 +532,16 @@ def finish_progress(item_id: int, name: str, color: str = "green"):
     global _plain_cr
     with _lock:
         _active.pop(item_id, None)
-        c = _COLOR_MAP.get(color, _GREEN)
+        style = _STYLES.get(color, "green")
         ic = icon("error") if color == "red" else icon("ok")
-        _completed.insert(0, (ic.strip() or "·", name, c))
+        _completed.insert(0, (ic, name, style))
 
         if not _UI:
             if _plain_cr:
                 _plain_cr = False
                 _emit("")
             verb = "Error:" if color == "red" else "Guardado:"
-            text = f"{ic}{verb} {name}"
-            _emit(_paint(text, c) if c else text)
+            _emit(_paint(f"{ic} {verb} {name}", _ANSI.get(color, "")))
 
     if not any(p.bar_kind == "spinner" for p in _active.values()):
         _stop_tick()
@@ -531,10 +551,17 @@ def finish_progress(item_id: int, name: str, color: str = "green"):
 # ── Cierre ────────────────────────────────────────────────────────────
 
 def shutdown(success: int, failed: int, last: str):
-    global _UI
+    global _UI, _live_active
     _stop_tick()
+    if _UI and _live is not None and _live_active:
+        try:
+            _live.stop()
+        except Exception:
+            pass
+        _live_active = False
     _UI = False
-    w = shutil.get_terminal_size().columns
+
+    w = _console.width if _console is not None else shutil.get_terminal_size().columns
     sep = "─" * max(1, min(w - 2, 62))
     _emit("")
     _emit(_paint(sep, _GRAY))

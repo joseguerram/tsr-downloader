@@ -13,7 +13,7 @@ Descarga contenido de The Sims Resource copiando enlaces. La aplicación supervi
 
 ## Requisitos
 
-- Solo **Python 3.10 o superior**. No necesitas `make` ni nada más.
+- Solo **Python 3.10 o superior**. Sin dependencias externas.
 - Cuenta gratuita en The Sims Resource.
 
 ## Instalación y uso
@@ -31,15 +31,6 @@ python run.py          # ejecuta la aplicación (hace setup automático si falta
 python run.py run      # igual que 'python run.py'
 python run.py clean    # elimina .venv y archivos temporales (no toca config.json ni descargas)
 python run.py help     # muestra la ayuda
-```
-
-Si tu sistema tiene `make`, puedes usar los atajos equivalentes (llaman al mismo `run.py`):
-
-```sh
-make setup
-make run
-make clean
-make help
 ```
 
 > **Si mueves el repositorio a otra máquina:** el `.venv` es específico de cada equipo (contiene rutas absolutas). Ejecuta `python run.py` o `python run.py setup` una vez en la máquina nueva; se recreará todo el entorno. `config.json` se regenera desde la plantilla si falta.
@@ -79,7 +70,7 @@ Luego edita `config.json` (en la raíz del proyecto):
 
 ## Uso
 
-1. Ejecuta `python run.py` (o `make run`).
+1. Ejecuta `python run.py`.
 2. Abre The Sims Resource en el navegador.
 3. Copia enlaces de descarga.
 4. Los archivos se descargan solos.
@@ -97,8 +88,7 @@ tsr-downloader/
 │   ├── url_parser.py    ← Análisis y validación de URL
 │   ├── config.py        ← Rutas y carga de la configuración
 │   └── display.py       ← Interfaz de consola (colores y progreso)
-├── run.py               ← Entrada universal (setup / run / clean / help) — no requiere make
-├── Makefile             ← Atajo opcional para quienes tengan make
+├── run.py               ← Entrada universal: setup, run, clean, help
 ├── config.json.example  ← Plantilla de configuración (se sube a Git)
 ├── .gitignore
 ├── .venv/

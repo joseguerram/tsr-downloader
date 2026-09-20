@@ -7,8 +7,7 @@ Uso:
     python run.py clean   → elimina el entorno y los archivos temporales
     python run.py help    → muestra esta ayuda
 
-No requiere 'make': solo Python 3.10+. 'make setup' / 'make run' / 'make clean'
-del Makefile llaman a este mismo script.
+No requiere ninguna herramienta externa: solo Python 3.10+.
 """
 
 import os

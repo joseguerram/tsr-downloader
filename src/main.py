@@ -168,6 +168,7 @@ def _enqueue_items(item_id: int, requirements: list[int]):
 
 
 def process_url(text: str):
+    progress_started = False
     try:
         item_id = extract_item_id(text)
         if item_id is None:
@@ -194,12 +195,22 @@ def process_url(text: str):
                 display.note(f"{display.icon('dup')} Item {item_id} ya fue descargado anteriormente")
             return
 
-        display.info(f"{display.icon('new')} Nuevo item #{item_id}")
+        # Crear la fila inmediatamente. Las comprobaciones de VIP y
+        # dependencias pueden tardar; el usuario debe ver el item desde ya.
+        display.start_progress(
+            item_id,
+            f"{display.icon('download')} Item #{item_id}",
+        )
+        progress_started = True
 
         # Comprobación de VIP
         try:
             if is_vip_exclusive(item_id):
-                display.warn(f"{display.icon('vip')} Item {item_id} es exclusivo de VIP, omitido")
+                display.finish_progress(
+                    item_id,
+                    f"Item {item_id} — exclusivo VIP",
+                    "red",
+                )
                 return
         except Exception as e:
             logger.warning(f"Item {item_id}: no se pudo verificar VIP ({e})")
@@ -211,12 +222,15 @@ def process_url(text: str):
             logger.warning(f"Item {item_id}: no se pudieron verificar dependencias ({e})")
             requirements = []
 
-        if requirements:
-            display.info(f"{display.icon('new')} Item {item_id} requiere: {requirements}")
-
         _enqueue_items(item_id, requirements)
 
     except Exception as e:
+        if progress_started:
+            display.finish_progress(
+                item_id,
+                f"item {item_id} ({type(e).__name__})",
+                "red",
+            )
         display.err(f"Error al procesar la URL: {type(e).__name__}: {e}")
 
 

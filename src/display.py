@@ -537,9 +537,16 @@ class _Progress:
 
 
 def start_progress(item_id: int, label: str | None = None) -> _Progress:
-    p = _Progress(item_id)
-    p.label = label                          # None = spinner "preparando" sin nombre
     with _lock:
+        # La fila puede crearse al detectar la URL, antes de las peticiones
+        # de comprobación. La descarga real reutiliza esa misma fila.
+        p = _active.get(item_id)
+        if p is not None:
+            if label is not None:
+                p.set_label(label)
+            return p
+        p = _Progress(item_id)
+        p.label = label                          # None = spinner preparando
         _active[item_id] = p
     _start_tick()
     _render(force=True)

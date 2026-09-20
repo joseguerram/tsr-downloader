@@ -91,14 +91,19 @@ class DownloadRow(Horizontal):
     DownloadRow.done .row-state { width: 0; }
     """
 
-    def __init__(self, key: object, label: str, state: str = "", style: str = "bold"):
+    def __init__(self, key: object, label: str, state: str = "", style: str = "bold", done: bool = False):
         super().__init__()
         self.key = key
         self._label, self._state, self._style = label, state, style
+        self._done = done
 
     def compose(self) -> ComposeResult:
         yield Static(self._label, classes="row-label")
         yield Static(self._state, classes="row-state")
+
+    def on_mount(self) -> None:
+        if self._done:
+            self.add_class("done")
 
     def update_row(self, label: str, state: str, style: str = "bold", done: bool = False):
         self._label, self._state, self._style = label, state, style
@@ -359,7 +364,7 @@ def finish_progress(item_id: int, name: str, color: str = "green"):
 
 def finish_duplicate(item_id: int, name: str):
     row_key = ("duplicate", item_id, time.monotonic_ns())
-    row = DownloadRow(row_key, f"{icon('dup')} {name}", "", "dim")
+    row = DownloadRow(row_key, f"{icon('dup')} {name}", "", "dim", done=True)
     with _lock:
         _rows[row_key] = row
         _order.append(row_key)

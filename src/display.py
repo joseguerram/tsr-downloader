@@ -15,7 +15,7 @@ from collections import deque
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Rule, Static
+from textual.widgets import Static
 from rich.text import Text
 
 
@@ -161,7 +161,6 @@ class TSRApp(App[None]):
         scrollbar-color: #2d7890;
         scrollbar-background: #0b1222;
     }
-    #separator { height: 1; color: #b638a9; }
     .green { color: #62ff9b; }
     .red { color: #ff5370; }
     .yellow { color: #ffe66d; }
@@ -173,7 +172,6 @@ class TSRApp(App[None]):
         yield Static("TSR Downloader", id="identity")
         yield Static("", id="status")
         yield VerticalScroll(id="messages")
-        yield Rule(id="separator")
         yield VerticalScroll(id="downloads")
 
     def on_mount(self) -> None:

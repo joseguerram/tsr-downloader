@@ -66,7 +66,7 @@ Luego edita `config.json` (en la raíz del proyecto):
 
 **Privacidad:** `config.json`, `session.json` e `history.json` no se suben a Git (están en `.gitignore`). Solo se publica la plantilla `config.json.example`.
 
-**Iconos (Nerd Font):** la aplicación detecta automáticamente si tu terminal usa una fuente Nerd Font (p. ej. JetBrainsMono Nerd Font). Si la encuentra, muestra iconos de esa fuente; si no, usa símbolos Unicode estándar (↓, ✓, ✗). Pon `use_nerd_icons` en `false` para desactivar los iconos por completo.
+**Iconos (Nerd Font):** la terminal no puede informar de la fuente que usas, así que decide la configuración: con `use_nerd_icons: true` se usan iconos de Nerd Font (instala antes una fuente parcheada, p. ej. JetBrainsMono Nerd Font); con `false`, los símbolos Unicode estándar (↓, ✓, ✗).
 
 ## Uso
 
@@ -77,6 +77,8 @@ Luego edita `config.json` (en la raíz del proyecto):
 
 Se guardan en la carpeta configurada (por defecto, `./downloads/`).
 
+Si una descarga falla, se reintenta automáticamente a los 30 s (hasta 3 intentos).
+
 ## Interfaz
 
 La aplicación usa una interfaz TUI basada en Textual con tema cyberpunk:
@@ -86,6 +88,7 @@ La aplicación usa una interfaz TUI basada en Textual con tema cyberpunk:
 - Cada descarga ocupa una fila permanente con barra de progreso en cian.
 - Spinners animados durante la descarga.
 - Bordes sutiles que separan las secciones de avisos y descargas.
+- Cada aviso lleva un símbolo de nivel (✗ error, ⚠ aviso, ✓ correcto, • info): la severidad se lee sin depender del color.
 
 ### Atajos de teclado
 
@@ -95,24 +98,46 @@ La aplicación usa una interfaz TUI basada en Textual con tema cyberpunk:
 | `Ctrl+C` | Cerrar la aplicación |
 
 Al cerrar se muestra un resumen con el número de descargas completadas y fallidas.
+La cola pendiente se cancela al salir; las descargas en curso terminan solas.
+
+Si la salida no es una terminal, o defines `NO_COLOR=1` (también `TERM=dumb`), se usa el modo plano: sin colores ANSI y con el progreso anunciado en texto cada 25 %.
 
 ## Estructura del proyecto
 
 ```
 tsr-downloader/
 ├── src/
-│   ├── main.py          ← Punto de entrada y bucle del portapapeles
+│   ├── main.py          ← Punto de entrada: main() y bucle del portapapeles
+│   ├── manager.py       ← DownloadManager: cola, activos, historial, contadores
 │   ├── session.py       ← Inicio de sesión GraphQL (sin captcha)
-│   ├── downloader.py    ← Descarga con reanudación y grupo de hilos
+│   ├── downloader.py    ← Descarga con reanudación y progreso en vivo
 │   ├── url_parser.py    ← Análisis y validación de URL
-│   ├── config.py        ← Rutas y carga de la configuración
-│   └── display.py       ← Interfaz TUI (Textual, tema cyberpunk)
+│   ├── config.py        ← Configuración y persistencia (config/historial/sesión)
+│   ├── exceptions.py    ← Excepciones de dominio
+│   └── display.py       ← Backends de UI: TUI (Textual) y modo plano
+├── tests/
+│   ├── test_url_parser.py
+│   └── test_display.py
 ├── run.py               ← Entrada universal: setup, run, clean, help
+├── pyproject.toml       ← Configuración de ruff, mypy y pytest
+├── requirements.txt     ← Dependencias de ejecución
+├── requirements-dev.txt ← Herramientas de desarrollo
 ├── config.json.example  ← Plantilla de configuración (se sube a Git)
 ├── .gitignore
 ├── .venv/
-├── requirements.txt
 └── README.md
 ```
 
 > `config.json`, `session.json`, `history.json` y `logs.log` se generan en la raíz y no se suben a Git.
+
+## Desarrollo
+
+Herramientas de calidad (opcionales), con el entorno virtual activado:
+
+```sh
+python -m pip install -r requirements-dev.txt
+python -m pytest                       # tests
+python -m ruff check src tests run.py  # linter
+python -m ruff format src tests run.py # formateador
+python -m mypy src                     # comprobación de tipos
+```

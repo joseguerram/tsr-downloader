@@ -4,6 +4,8 @@ config.json
 # Sesión y estado
 session.json
 history.json
+*.bak
+*.tmp
 
 # Logs y descargas
 logs.log

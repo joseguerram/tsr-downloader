@@ -49,11 +49,57 @@ def setup():
             print("    -> config.json generado desde config.json.example")
         else:
             print("    -> config.json.example no encontrado; crea config.json a mano")
+
+        # Pedir credenciales si el template tiene placeholders
+        try:
+            _prompt_credentials(cfg)
+        except SystemExit:
+            return
     else:
         print("    -> config.json ya existe, sin cambios")
 
     print()
-    print("Instalación completa. Edita config.json y ejecuta 'python run.py run'.")
+    print("Instalación completa. Ejecuta 'python run.py run'.")
+
+
+def _prompt_credentials(cfg_path):
+    """Pide email y contraseña si están vacíos o son placeholder."""
+    import json as _json
+    with open(cfg_path) as f:
+        data = _json.load(f)
+
+    placeholders = {"tu_correo", "tu_contraseña", "tu_email", ""}
+    email = data.get("tsr_email", "").strip()
+    password = data.get("tsr_password", "").strip()
+
+    if email not in placeholders and password not in placeholders:
+        return
+
+    print()
+    print("  Configuración de TSR Downloader")
+    print("  Se necesitan el email y la contraseña de tu cuenta en TSR.")
+    print()
+
+    if email in placeholders:
+        data["tsr_email"] = input("  Email de tu cuenta TSR: ").strip()
+    else:
+        print(f"  Email: {email} (ya configurado)")
+
+    if password in placeholders:
+        data["tsr_password"] = input("  Contraseña de tu cuenta TSR: ").strip()
+    else:
+        print("  Contraseña: ****** (ya configurada)")
+
+    if not data["tsr_email"] or not data["tsr_password"]:
+        print()
+        print("  ✗ Email y contraseña son obligatorios.")
+        print("  Edita config.json manualmente y vuelve a intentar.")
+        raise SystemExit(1)
+
+    with open(cfg_path, "w") as f:
+        _json.dump(data, f, indent=4)
+    print()
+    print(f"  ✓ Configuración guardada en config.json")
 
 
 def run():

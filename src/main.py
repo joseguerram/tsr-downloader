@@ -61,11 +61,17 @@ def _history_ids() -> set[int]:
 # ── Session Setup ─────────────────────────────────────────────────────
 
 def setup_session():
-    global session
+    global session, config
     saved = load_session()
     if saved and session.validate_saved(saved):
         display.ok(f"{display.icon('ok')} Sesión restaurada")
         return
+
+    if config.needs_setup():
+        display.info("Credenciales no configuradas. Se pedirán a continuación:")
+        config.interactive_setup()
+        # Recargar después de guardar
+        config = Config.load()
 
     if config.tsr_email and config.tsr_password:
         if session.login(config.tsr_email, config.tsr_password):
@@ -74,8 +80,8 @@ def setup_session():
             return
 
     display.err(
-        "No se pudo iniciar la sesión. Añade tsr_email y tsr_password "
-        "en config.json para el inicio de sesión automático."
+        "No se pudo iniciar la sesión. Verifica tsr_email y tsr_password "
+        "en config.json."
     )
     sys.exit(1)
 

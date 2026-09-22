@@ -24,6 +24,9 @@ def _ensure_config():
         logger.info("Creado config.json a partir de config.json.example")
 
 
+_PLACEHOLDERS = {"tu_correo", "tu_contraseña", "tu_email", ""}
+
+
 @dataclass
 class Config:
     download_directory: str = "./downloads"
@@ -41,6 +44,40 @@ class Config:
                 data = json.load(f)
             return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
         return cls()
+
+    def needs_setup(self) -> bool:
+        """Indica si faltan credenciales obligatorias."""
+        return (
+            self.tsr_email.strip() in _PLACEHOLDERS
+            or self.tsr_password.strip() in _PLACEHOLDERS
+        )
+
+    def interactive_setup(self) -> None:
+        """Pide al usuario las credenciales que faltan y guarda el archivo."""
+        print()
+        print("Configuración de TSR Downloader")
+        print("  Se necesitan el email y la contraseña de tu cuenta en TSR.")
+        print()
+
+        if self.tsr_email.strip() in _PLACEHOLDERS:
+            self.tsr_email = input("  Email de tu cuenta TSR: ").strip()
+        else:
+            print(f"  Email: {self.tsr_email} (ya configurado)")
+
+        if self.tsr_password.strip() in _PLACEHOLDERS:
+            self.tsr_password = input("  Contraseña de tu cuenta TSR: ").strip()
+        else:
+            print("  Contraseña: ****** (ya configurada)")
+
+        if not self.tsr_email or not self.tsr_password:
+            print()
+            print("  ✗ Email y contraseña son obligatorios.")
+            print("  Edita config.json manualmente y vuelve a intentar.")
+            raise SystemExit(1)
+
+        self.save()
+        print()
+        print(f"  ✓ Configuración guardada en {os.path.basename(CONFIG_PATH)}")
 
     def save(self):
         with open(CONFIG_PATH, "w") as f:

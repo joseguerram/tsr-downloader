@@ -1,7 +1,10 @@
-"""Interfaz de terminal de TSR Downloader basada en Textual.
+"""Interfaz de terminal de TSR Downloader.
 
-La capa conserva una API sencilla para que la lógica de descargas pueda
-actualizar la interfaz desde sus hilos de trabajo.
+Expone una API de módulo (``display.info``, ``display.start_progress``…)
+que delega en el backend activo:
+
+- :class:`TUIBackend` — interfaz TUI basada en Textual (stdout es terminal).
+- :class:`PlainBackend` — salida plana por stdout (redirecciones, CI, tests).
 """
 
 from __future__ import annotations
@@ -12,30 +15,24 @@ import sys
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Static
-from rich.text import Text
-
 
 _SPINNERS = ["◜", "◝", "◞", "◟"]
+# (Nerd Font / Font Awesome, Unicode, ASCII). El primer slot solo se usa
+# en modo nerd (use_nerd_icons en config.json).
 _ICON_SETS = {
-    "download": ("↓", "↓", " "),
-    "ok": ("✓", "✓", "✓"),
-    "error": ("✗", "✗", "✗"),
-    "queue": ("…", "…", ">"),
-    "vip": ("■", "■", "!"),
-    "dup": ("~", "~", "-"),
-    "new": ("+", "+", "+"),
-}
-
-_STYLES = {
-    "green": "green",
-    "red": "red",
-    "yellow": "yellow",
-    "cyan": "cyan",
-    "gray": "dim",
+    "download": ("", "↓", " "),
+    "ok": ("", "✓", "✓"),
+    "error": ("", "✗", "✗"),
+    "queue": ("", "…", ">"),
+    "vip": ("", "■", "!"),
+    "dup": ("", "~", "-"),
+    "new": ("", "+", "+"),
 }
 _TEXT_STYLES = {
     "green": "#62ff9b",
@@ -44,24 +41,28 @@ _TEXT_STYLES = {
     "cyan": "#00e5ff",
     "gray": "#8892a8",
 }
-_ANSI = {"green": "\033[32m", "red": "\033[31m", "yellow": "\033[33m", "cyan": "\033[36m", "gray": "\033[90m"}
+_ANSI = {
+    "green": "\033[32m",
+    "red": "\033[31m",
+    "yellow": "\033[33m",
+    "cyan": "\033[36m",
+    "gray": "\033[90m",
+}
 _RESET = "\033[0m"
 
-_UI = False
-_COLORS = True
+# Símbolo por severidad: la lectura no depende del color (daltonismo,
+# terminales monocromas, capturas de pantalla en blanco y negro).
+_LEVEL_SYMBOLS = {"red": "✗", "yellow": "⚠", "green": "✓", "cyan": "•"}
+
+_LOG_LEN = 3
+# Intervalo mínimo entre volcados de barra a la TUI (la barra se actualiza
+# mucho más rápido y cada volcado es un viaje al hilo de la TUI).
+_BAR_SYNC_MIN_INTERVAL = 0.1
 _mode = "unicode"
-_app: "TSRApp | None" = None
-_app_ready = threading.Event()
-_lock = threading.RLock()
-_log: deque[tuple[str, str]] = deque(maxlen=3)
-_rows: dict[object, "DownloadRow"] = {}
-_order: list[object] = []
-_status = ""
-_member_info = ""
-_total_files = 0
-_session_ok = 0
-_session_failed = 0
-_plain_cr = False
+_colors = True
+
+
+# ── Helpers ───────────────────────────────────────────────────────────
 
 
 def icon(name: str) -> str:
@@ -94,20 +95,55 @@ def build_bar(pct: float, width: int = 24) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+def _emit(text: str, end: str = "\n") -> None:
+    sys.stdout.write(text + end)
+    sys.stdout.flush()
+
+
+def _paint(text: str, color: str) -> str:
+    return f"{_ANSI.get(color, '')}{text}{_RESET}" if _colors and color else text
+
+
+def _print_summary(success: int, failed: int, last: str) -> None:
+    width = shutil.get_terminal_size().columns
+    sep = "─" * max(1, min(width - 2, 62))
+    _emit("")
+    _emit(_paint(sep, "gray"))
+    _emit(f"Resumen — descargados: {success} | fallidos: {failed}")
+    if last:
+        _emit(f"Último archivo: {last}")
+    _emit(_paint(sep, "gray"))
+
+
+# ── Widgets TUI ───────────────────────────────────────────────────────
+
+
 class DownloadRow(Horizontal):
     """Una fila permanente: solo cambia su contenido, nunca su posición."""
 
     DEFAULT_CSS = """
     DownloadRow { height: 1; width: 100%; }
     DownloadRow .row-label { width: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }
-    DownloadRow .row-state { width: 52; content-align: right middle; text-wrap: nowrap; text-overflow: ellipsis; }
+    DownloadRow .row-state {
+        width: 52;
+        content-align: right middle;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
     DownloadRow.done .row-state { width: 0; }
     """
 
-    def __init__(self, key: object, label: str, state: str = "", style: str = "bold", done: bool = False):
+    def __init__(
+        self,
+        label: str,
+        state: str = "",
+        state_style: str = "magenta",
+        done: bool = False,
+    ) -> None:
         super().__init__()
-        self.key = key
-        self._label, self._state, self._style = label, state, style
+        self._label = label
+        self._state = state
+        self._state_style = state_style
         self._done = done
 
     def compose(self) -> ComposeResult:
@@ -118,15 +154,24 @@ class DownloadRow(Horizontal):
         if self._done:
             self.add_class("done")
 
-    def update_row(self, label: str, state: str, style: str = "bold", done: bool = False):
-        self._label, self._state, self._style = label, state, style
-        self.query_one(".row-label", Static).update(Text(label, style=style))
-        state_widget = self.query_one(".row-state", Static)
-        state_widget.update(Text(state, style="cyan" if state and not state.startswith("SPINNER:") else "magenta"))
+    def update_row(
+        self,
+        label: str,
+        state: str = "",
+        *,
+        label_style: str = "bold",
+        state_style: str = "cyan",
+        done: bool = False,
+    ) -> None:
+        self.query_one(".row-label", Static).update(Text(label, style=label_style))
+        self.query_one(".row-state", Static).update(Text(state, style=state_style))
         if done:
             self.add_class("done")
         else:
             self.remove_class("done")
+
+    def update_state(self, state: str, state_style: str = "magenta") -> None:
+        self.query_one(".row-state", Static).update(Text(state, style=state_style))
 
 
 class TSRApp(App[None]):
@@ -170,6 +215,10 @@ class TSRApp(App[None]):
     .dim { color: #8892a8; }
     """
 
+    def __init__(self, backend: TUIBackend) -> None:
+        super().__init__()
+        self._backend = backend
+
     def compose(self) -> ComposeResult:
         yield Static("TSR Downloader", id="identity")
         yield Static("", id="status")
@@ -177,24 +226,8 @@ class TSRApp(App[None]):
         yield VerticalScroll(id="downloads")
 
     def on_mount(self) -> None:
-        _app_ready.set()
-        self.set_interval(0.35, self._tick_spinner)
-
-    def _tick_spinner(self) -> None:
-        with _lock:
-            pending = [progress for progress in _rows.values()
-                       if isinstance(progress, _Progress)
-                       and progress.bar_kind == "spinner"]
-        glyph = _SPINNERS[int(time.monotonic() * 3) % len(_SPINNERS)]
-        for progress in pending:
-            row = progress.row
-            if row is not None:
-                try:
-                    row.query_one(".row-state", Static).update(
-                        glyph + (f"  {progress.message_text}" if progress.message_text else "")
-                    )
-                except Exception:
-                    pass
+        self._backend.mounted(self)
+        self.set_interval(0.35, self._backend.tick_spinner)
 
     def set_identity(self, text: str) -> None:
         title, separator, member = text.partition(" · ")
@@ -217,180 +250,395 @@ class TSRApp(App[None]):
         self.query_one("#downloads", VerticalScroll).mount(row)
 
 
-def _call(method, *args):
-    app = _app
-    if app is None:
-        return
-    if threading.current_thread() is getattr(app, "_thread", None):
-        method(*args)
-    else:
-        try:
-            app.call_from_thread(method, *args)
-        except RuntimeError:
-            # Puede ocurrir durante un cierre muy temprano de la aplicación.
-            pass
+# ── Progreso ──────────────────────────────────────────────────────────
 
 
-def init(nerd_requested: bool = True):
-    global _UI, _COLORS, _mode, _app
-    _COLORS = sys.stdout.isatty()
-    _UI = _COLORS
-    _mode = "unicode"
-    if not _UI:
-        return
+class Progress:
+    """Progreso de una descarga; el backend decide cómo renderizarlo."""
 
-    _app = TSRApp()
-
-
-def run(worker):
-    """Ejecuta Textual en el hilo principal y ``worker`` en segundo plano."""
-    if not _UI or _app is None:
-        worker()
-        return
-
-    _app._thread = threading.current_thread()
-    def run_worker():
-        try:
-            worker()
-        finally:
-            try:
-                _app.exit()
-            except Exception:
-                pass
-
-    thread = threading.Thread(target=run_worker, name="downloader-worker", daemon=True)
-    thread.start()
-    _app.run()
-    thread.join(timeout=2)
-
-
-def _paint(text: str, color: str) -> str:
-    return f"{_ANSI.get(color, '')}{text}{_RESET}" if _COLORS and color else text
-
-
-def _emit(text: str, end: str = "\n"):
-    sys.stdout.write(text + end)
-    sys.stdout.flush()
-
-
-def _refresh_messages() -> None:
-    _call(_app.set_messages, list(_log)) if _app else None
-
-
-def _log_msg(text: str, color: str):
-    with _lock:
-        _log.append((text, color))
-    if not _UI:
-        _emit(_paint(text, color))
-    else:
-        _refresh_messages()
-
-
-def info(msg: str): _log_msg(msg, "cyan")
-def ok(msg: str): _log_msg(msg, "green")
-def err(msg: str): _log_msg(msg, "red")
-def warn(msg: str): _log_msg(msg, "yellow")
-def note(msg: str): _log_msg(msg, "")
-
-
-def set_session_info(member_id: str = "", authenticated: bool = True):
-    global _member_info
-    _member_info = f"Miembro #{member_id}" if authenticated and member_id else "Anónimo"
-    if _app:
-        _call(_app.set_identity, f"TSR Downloader · {_member_info}")
-
-
-def update_status(*, total: int | None = None, active: int | None = None,
-                  queue: int | None = None, ok_count: int | None = None,
-                  failed: int | None = None):
-    global _status, _total_files
-    if total is not None:
-        _total_files = total
-    values = [f"Total: {_total_files}"]
-    if ok_count is not None: values.append(f"Descargados: {ok_count}")
-    if failed is not None: values.append(f"Fallaron: {failed}")
-    if active is not None: values.append(f"Descargando: {active}")
-    if queue is not None: values.append(f"Cola: {queue}")
-    _status = " | ".join(values)
-    if _app: _call(_app.set_status, _status)
-
-
-class _Progress:
-    def __init__(self, item_id: int, row_key: object):
-        self.item_id, self.row_key = item_id, row_key
-        self.label = None
+    def __init__(self, item_id: int, backend: PlainBackend, label: str | None = None) -> None:
+        self.item_id = item_id
+        self.label = label
+        self.backend = backend
         self.bar_kind = "spinner"
         self.message_text = ""
         self.bar = ""
         self.row: DownloadRow | None = None
+        # Última instantánea para poder anunciar el progreso sin TUI.
+        self.pct = 0.0
+        self.downloaded = 0.0
+        self.total = 0.0
+        self.speed = 0.0
+        self.eta = 0.0
+        self.announced = 0  # último cuartil anunciado en modo plano
+        self._last_sync = 0.0  # instante del último volcado de barra (throttle)
 
-    def set_label(self, label: str | None = None):
+    def set_label(self, label: str | None) -> None:
         self.label = label
-        _update_active_row(self)
+        self.backend.sync_progress(self)
 
-    def message(self, text: str):
-        self.message_text, self.bar_kind = text, "spinner"
-        _update_active_row(self)
+    def message(self, text: str) -> None:
+        self.message_text = text
+        self.bar_kind = "spinner"
+        self.backend.sync_progress(self)
 
-    def update(self, pct: float, downloaded: float, total: float, speed: float, eta: float):
-        self.bar = (f"{build_bar(pct)} {pct:3.0f}%  {format_bytes(downloaded)}/"
-                    f"{format_bytes(total)}  {format_speed(speed)}  ETA {format_eta(eta)}")
-        self.bar_kind, self.message_text = "bar", ""
-        _update_active_row(self)
-
-
-def _update_active_row(progress: _Progress):
-    state = progress.bar if progress.bar_kind == "bar" else "SPINNER:" + (f"  {progress.message_text}" if progress.message_text else "")
-    row = progress.row
-    if row:
-        _call(row.update_row, progress.label or " ", state, "bold")
-
-
-def start_progress(item_id: int, label: str | None = None) -> _Progress:
-    with _lock:
-        existing = next((p for key, p in _rows.items() if key == item_id and isinstance(p, _Progress)), None)
-        if existing:
-            if label is not None: existing.set_label(label)
-            return existing
-        progress = _Progress(item_id, item_id)
-        progress.label = label
-        _rows[item_id] = progress
-        _order.append(item_id)
-    row = DownloadRow(item_id, label or " ", "SPINNER:", "bold")
-    progress.row = row
-    _rows[item_id] = progress
-    _call(_app.add_row, row) if _app else None
-    return progress
+    def update(self, pct: float, downloaded: float, total: float, speed: float, eta: float) -> None:
+        self.pct = pct
+        self.downloaded = downloaded
+        self.total = total
+        self.speed = speed
+        self.eta = eta
+        self.bar = (
+            f"{build_bar(pct)} {pct:3.0f}%  {format_bytes(downloaded)}/"
+            f"{format_bytes(total)}  {format_speed(speed)}  ETA {format_eta(eta)}"
+        )
+        self.bar_kind = "bar"
+        self.message_text = ""
+        self.backend.sync_progress(self)
 
 
-def finish_progress(item_id: int, name: str, color: str = "green"):
-    with _lock:
-        progress = _rows.get(item_id)
-    row = progress.row if isinstance(progress, _Progress) else None
-    if row is not None:
-        label = f"{icon('error' if color == 'red' else 'ok')} {name}"
-        _call(row.update_row, label, "", _TEXT_STYLES.get(color, "#62ff9b"), True)
-    if not _UI:
-        _emit(_paint(f"{icon('error' if color == 'red' else 'ok')} {'Error:' if color == 'red' else 'Guardado:'} {name}", color))
+# ── Backends ──────────────────────────────────────────────────────────
 
 
-def finish_duplicate(item_id: int, name: str):
-    row_key = ("duplicate", item_id, time.monotonic_ns())
-    row = DownloadRow(row_key, f"{icon('dup')} {name}", "", "dim", done=True)
-    with _lock:
-        _rows[row_key] = row
-        _order.append(row_key)
-    if _app: _call(_app.add_row, row)
-    elif not _UI: _emit(_paint(f"{icon('dup')} {name}", "gray"))
+class PlainBackend:
+    """Salida plana por stdout; define además la API común de los backends."""
+
+    def __init__(self) -> None:
+        self.log: deque[tuple[str, str]] = deque(maxlen=_LOG_LEN)
+        self.status = ""
+        self.member_info = ""
+        self.total_files = 0
+
+    # -- Mensajes ---------------------------------------------------------
+
+    def log_msg(self, text: str, color: str) -> None:
+        # Símbolo por nivel: la severidad se lee sin depender del color.
+        symbol = _LEVEL_SYMBOLS.get(color, "")
+        if symbol and not text.lstrip().startswith(symbol):
+            text = f"{symbol} {text}"
+        self.log.append((text, color))
+        self.render_log(text, color)
+
+    def info(self, msg: str) -> None:
+        self.log_msg(msg, "cyan")
+
+    def ok(self, msg: str) -> None:
+        self.log_msg(msg, "green")
+
+    def err(self, msg: str) -> None:
+        self.log_msg(msg, "red")
+
+    def warn(self, msg: str) -> None:
+        self.log_msg(msg, "yellow")
+
+    def note(self, msg: str) -> None:
+        self.log_msg(msg, "")
+
+    def render_log(self, text: str, color: str) -> None:
+        _emit(_paint(text, color))
+
+    def render_identity(self) -> None:
+        """El modo plano no muestra la cabecera de identidad."""
+
+    def render_status(self) -> None:
+        """El modo plano no muestra la barra de estado."""
+
+    # -- Sesión y contadores ---------------------------------------------
+
+    def set_session_info(self, member_id: str = "", authenticated: bool = True) -> None:
+        self.member_info = f"Miembro #{member_id}" if authenticated and member_id else "Anónimo"
+        self.render_identity()
+
+    def update_status(
+        self,
+        *,
+        total: int | None = None,
+        active: int | None = None,
+        queue: int | None = None,
+        ok_count: int | None = None,
+        failed: int | None = None,
+    ) -> None:
+        if total is not None:
+            self.total_files = total
+        values = [f"Total: {self.total_files}"]
+        if ok_count is not None:
+            values.append(f"Descargados: {ok_count}")
+        if failed is not None:
+            values.append(f"Fallaron: {failed}")
+        if active is not None:
+            values.append(f"Descargando: {active}")
+        if queue is not None:
+            values.append(f"Cola: {queue}")
+        self.status = " | ".join(values)
+        self.render_status()
+
+    # -- Progreso ---------------------------------------------------------
+
+    def start_progress(self, item_id: int, label: str | None = None) -> Progress:
+        return Progress(item_id, self, label)
+
+    def sync_progress(self, progress: Progress) -> None:
+        """Anuncia el progreso en texto cada 25 % (sin barra de bloques)."""
+        if progress.bar_kind != "bar":
+            return
+        quarter = int(progress.pct // 25)
+        if not 1 <= quarter <= 3 or quarter <= progress.announced:
+            return
+        progress.announced = quarter
+        detail = (
+            f"{progress.pct:3.0f}%  {format_bytes(progress.downloaded)}/"
+            f"{format_bytes(progress.total)}  {format_speed(progress.speed)}  "
+            f"ETA {format_eta(progress.eta)}"
+        )
+        label = progress.label or f"Item #{progress.item_id}"
+        _emit(f"{label}: {detail}")
+
+    def finish_progress(self, item_id: int, name: str, color: str = "green") -> None:
+        mark = icon("error" if color == "red" else "ok")
+        word = "Error:" if color == "red" else "Guardado:"
+        _emit(_paint(f"{mark} {word} {name}", color))
+
+    def finish_duplicate(self, item_id: int, name: str) -> None:
+        _emit(_paint(f"{icon('dup')} {name}", "gray"))
+
+    # -- Ciclo de vida ----------------------------------------------------
+
+    def shutdown(self, success: int, failed: int, last: str) -> None:
+        _print_summary(success, failed, last)
+
+    def run(self, worker: Callable[[], None], stop: threading.Event) -> None:
+        # El modo plano no tiene señal de cierre: se detiene con Ctrl+C.
+        worker()
 
 
-def shutdown(success: int, failed: int, last: str):
-    global _UI
-    _UI = False
-    width = shutil.get_terminal_size().columns
-    sep = "─" * max(1, min(width - 2, 62))
-    _emit("")
-    _emit(_paint(sep, "gray"))
-    _emit(f"Resumen — descargados: {success} | fallidos: {failed}")
-    if last: _emit(f"Último archivo: {last}")
-    _emit(_paint(sep, "gray"))
+class TUIBackend(PlainBackend):
+    """Interfaz TUI basada en Textual."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.RLock()
+        self._progress: dict[int, Progress] = {}
+        self._app = TSRApp(self)
+        self._app_thread: threading.Thread | None = None
+        self._ready = threading.Event()
+        self._pending_summary: tuple[int, int, str] | None = None
+
+    # -- Puente con el hilo de la TUI -------------------------------------
+    # Regla: nunca llamar a _call() mientras se sostiene self._lock; la TUI
+    # toma ese lock en tick_spinner y se produciría un bloqueo cruzado.
+
+    def _call(
+        self,
+        method: Callable[..., None],
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        if threading.current_thread() is self._app_thread:
+            method(*args, **kwargs)
+            return
+        if not self._ready.is_set():
+            # Mounted() vuelca el estado bufferizado al abrir la pantalla.
+            return
+        try:
+            self._app.call_from_thread(method, *args, **kwargs)
+        except RuntimeError:
+            # Puede ocurrir durante un cierre muy temprano de la aplicación.
+            pass
+
+    def mounted(self, app: TSRApp) -> None:
+        """Se ejecuta en el hilo de la TUI al montar la pantalla."""
+        self._ready.set()
+        if self.member_info:
+            app.set_identity(f"TSR Downloader · {self.member_info}")
+        if self.status:
+            app.set_status(self.status)
+        app.set_messages(list(self.log))
+
+    def tick_spinner(self) -> None:
+        """Animación de los spinners (se ejecuta en el hilo de la TUI)."""
+        with self._lock:
+            pending = [p for p in self._progress.values() if p.bar_kind == "spinner"]
+        glyph = _SPINNERS[int(time.monotonic() * 3) % len(_SPINNERS)]
+        for progress in pending:
+            row = progress.row
+            if row is None:
+                continue
+            state = glyph + (f"  {progress.message_text}" if progress.message_text else "")
+            try:
+                row.update_state(state)
+            except Exception:
+                pass
+
+    # -- Render ------------------------------------------------------------
+
+    def render_log(self, text: str, color: str) -> None:
+        self._call(self._app.set_messages, list(self.log))
+
+    def render_identity(self) -> None:
+        self._call(self._app.set_identity, f"TSR Downloader · {self.member_info}")
+
+    def render_status(self) -> None:
+        self._call(self._app.set_status, self.status)
+
+    # -- Progreso ----------------------------------------------------------
+
+    def start_progress(self, item_id: int, label: str | None = None) -> Progress:
+        row: DownloadRow | None = None
+        with self._lock:
+            progress = self._progress.get(item_id)
+            if progress is None:
+                progress = Progress(item_id, self, label)
+                row = DownloadRow(label or " ", _SPINNERS[0])
+                progress.row = row
+                self._progress[item_id] = progress
+        if row is not None:
+            self._call(self._app.add_row, row)  # fuera del lock
+        elif label is not None:
+            progress.set_label(label)  # fuera del lock
+        return progress
+
+    def sync_progress(self, progress: Progress) -> None:
+        row = progress.row
+        if row is None:
+            return
+        label = progress.label or " "
+        if progress.bar_kind == "bar":
+            # Throttle: la barra cambia a cientos de Hz y cada volcado es un
+            # viaje a la TUI; el estado final lo garantiza finish_progress.
+            now = time.monotonic()
+            if now - progress._last_sync < _BAR_SYNC_MIN_INTERVAL:
+                return
+            progress._last_sync = now
+            self._call(row.update_row, label, progress.bar, state_style="cyan")
+        else:
+            glyph = _SPINNERS[int(time.monotonic() * 3) % len(_SPINNERS)]
+            state = glyph + (f"  {progress.message_text}" if progress.message_text else "")
+            self._call(row.update_row, label, state, state_style="magenta")
+
+    def finish_progress(self, item_id: int, name: str, color: str = "green") -> None:
+        with self._lock:
+            progress = self._progress.get(item_id)
+        row = progress.row if progress is not None else None
+        if row is None:
+            return
+        mark = icon("error" if color == "red" else "ok")
+        self._call(
+            row.update_row,
+            f"{mark} {name}",
+            "",
+            label_style=_TEXT_STYLES.get(color, "#62ff9b"),
+            done=True,
+        )
+
+    def finish_duplicate(self, item_id: int, name: str) -> None:
+        row = DownloadRow(f"{icon('dup')} {name}", "", done=True)
+        self._call(self._app.add_row, row)
+
+    # -- Ciclo de vida -----------------------------------------------------
+
+    def shutdown(self, success: int, failed: int, last: str) -> None:
+        # Se imprime cuando la TUI ya devolvió el terminal (ver run()).
+        self._pending_summary = (success, failed, last)
+
+    def run(self, worker: Callable[[], None], stop: threading.Event) -> None:
+        self._app_thread = threading.current_thread()
+
+        def run_worker() -> None:
+            try:
+                worker()
+            finally:
+                try:
+                    self._app.exit()
+                except Exception:
+                    pass
+
+        thread = threading.Thread(target=run_worker, name="downloader-worker", daemon=True)
+        thread.start()
+        self._app.run()
+        # El usuario cerró la TUI: pide la parada y da 2 s para el resumen.
+        stop.set()
+        thread.join(timeout=2)
+        if self._pending_summary is not None:
+            _print_summary(*self._pending_summary)
+            self._pending_summary = None
+
+
+# ── Estado y API de módulo ────────────────────────────────────────────
+
+_ui: PlainBackend = PlainBackend()
+
+
+def init(nerd_requested: bool = True) -> None:
+    """Elige el backend y el juego de iconos según la terminal."""
+    global _ui, _colors, _mode
+    # NO_COLOR (no-color.org) o TERM=dumb: modo plano y sin ANSI.
+    ansi_ok = not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+    _colors = sys.stdout.isatty() and ansi_ok
+    # La terminal no informa de la fuente que usas: se respeta config.json.
+    _mode = "nerd" if _colors and nerd_requested else "unicode"
+    _ui = TUIBackend() if _colors else PlainBackend()
+
+
+def run(worker: Callable[[], None], stop: threading.Event) -> None:
+    """Ejecuta el backend con ``worker`` (TUI en su propio hilo)."""
+    global _ui
+    _ui.run(worker, stop)
+    if isinstance(_ui, TUIBackend):
+        # Tras cerrar la TUI, cualquier mensaje tardío va en modo plano.
+        _ui = PlainBackend()
+
+
+def info(msg: str) -> None:
+    _ui.info(msg)
+
+
+def ok(msg: str) -> None:
+    _ui.ok(msg)
+
+
+def err(msg: str) -> None:
+    _ui.err(msg)
+
+
+def warn(msg: str) -> None:
+    _ui.warn(msg)
+
+
+def note(msg: str) -> None:
+    _ui.note(msg)
+
+
+def fatal(msg: str) -> None:
+    """Error para la terminal real, antes de abrir o tras cerrar la TUI."""
+    _emit(_paint(msg, "red"))
+
+
+def set_session_info(member_id: str = "", authenticated: bool = True) -> None:
+    _ui.set_session_info(member_id, authenticated)
+
+
+def update_status(
+    *,
+    total: int | None = None,
+    active: int | None = None,
+    queue: int | None = None,
+    ok_count: int | None = None,
+    failed: int | None = None,
+) -> None:
+    _ui.update_status(total=total, active=active, queue=queue, ok_count=ok_count, failed=failed)
+
+
+def start_progress(item_id: int, label: str | None = None) -> Progress:
+    return _ui.start_progress(item_id, label)
+
+
+def finish_progress(item_id: int, name: str, color: str = "green") -> None:
+    _ui.finish_progress(item_id, name, color)
+
+
+def finish_duplicate(item_id: int, name: str) -> None:
+    _ui.finish_duplicate(item_id, name)
+
+
+def shutdown(success: int, failed: int, last: str) -> None:
+    _ui.shutdown(success, failed, last)

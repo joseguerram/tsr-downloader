@@ -1,0 +1,20 @@
+# Configuración de herramientas de calidad.
+# Las dependencias viven en requirements.txt / requirements-dev.txt
+# (run.py instala desde requirements.txt).
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+disallow_untyped_defs = true
+warn_unused_ignores = true
+# pyperclip y requests no publican py.typed; el resto se chequea completo.
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

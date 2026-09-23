@@ -59,17 +59,26 @@ Luego edita `config.json` (en la raíz del proyecto):
     "download_directory": "./downloads",
     "max_concurrent": 5,
     "history_size": 10,
-    "tsr_email": "tu_correo",
-    "tsr_password": "tu_contraseña",
-    "use_nerd_icons": true
+    "tsr_email": "jane.doe@example.com",
+    "tsr_password": "MyTsrPassword123!",
+    "use_nerd_icons": false
 }
 ```
 
-**Importante:** añade tu correo y contraseña de TSR para el inicio de sesión automático. Sin ello, la aplicación no funciona.
+### Variables
 
-**Privacidad:** `config.json`, `session.json` e `history.json` no se suben a Git (están en `.gitignore`). Solo se publica la plantilla `config.json.example`.
+| Variable | Tipo | Por defecto | Descripción |
+| --- | --- | --- | --- |
+| `download_directory` | string | `./downloads` | Carpeta donde se guardan las descargas. |
+| `max_concurrent` | integer | `5` | Máximo de descargas en paralelo. |
+| `history_size` | integer | `10` | Cuántas descargas se guardan en el historial. |
+| `tsr_email` | string | *(vacío)* | Email de tu cuenta en The Sims Resource (obligatorio). |
+| `tsr_password` | string | *(vacío)* | Contraseña de tu cuenta en TSR (obligatoria). |
+| `use_nerd_icons` | boolean | `false` | `true`: iconos de Nerd Font (instala antes una fuente parcheada, p. ej. JetBrainsMono Nerd Font); `false`: símbolos Unicode estándar (↓, ✓, ✗), que se ven bien en cualquier terminal. |
 
-**Iconos (Nerd Font):** la terminal no puede informar de la fuente que usas, así que decide la configuración: con `use_nerd_icons: true` se usan iconos de Nerd Font (instala antes una fuente parcheada, p. ej. JetBrainsMono Nerd Font); con `false`, los símbolos Unicode estándar (↓, ✓, ✗).
+**Importante:** la plantilla `config.json.example` llega con `tsr_email` y `tsr_password` **vacíos** — sustitúyelos por los de tu cuenta TSR (o deja que `python run.py setup` te los pida al arrancar). La aplicación no funciona sin credenciales. Si pegas el ejemplo de arriba tal cual, también volverá a pedírtelas: los valores de ejemplo jamás se usan para iniciar sesión.
+
+**Tus credenciales no salen de tu equipo:** `config.json` es un fichero **local** en tu disco; no hay servidores de esta aplicación, telemetría ni analítica. Git lo ignora (está en `.gitignore`), así que **nunca se sube a GitHub** — solo se publica la plantilla `config.json.example`, sin credenciales reales. Lo mismo aplica a `session.json`, `history.json` y `logs.log`. El único destino de tu email y contraseña en la red son los servidores de TSR, cuando la app inicia sesión (lo mismo que harías tú desde el navegador).
 
 ## Uso
 

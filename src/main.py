@@ -56,7 +56,7 @@ class AppState:
 
         if self.config.needs_setup():
             display.info("Credenciales no configuradas. Se pedirán a continuación:")
-            # interactive_setup muta este mismo objeto en sitio: manager
+            # interactive_setup modifica este mismo objeto directamente: manager
             # comparte la referencia y ve los valores nuevos sin recargar.
             self.config.interactive_setup()
 
@@ -81,7 +81,7 @@ class AppState:
                 clip = pyperclip.paste()
             except pyperclip.PyperclipException as e:
                 # Sin portapapeles (p. ej. Wayland sin wl-clipboard): se avisa
-                # una sola vez y se reintenta sin tumbar la aplicación.
+                # una sola vez y se reintenta sin detener la aplicación.
                 if not clipboard_warned:
                     clipboard_warned = True
                     display.err(
@@ -104,8 +104,8 @@ class AppState:
                     self.manager.executor.submit(self.manager.process_url, line)
 
             self.manager.start_ready()
-            # pyperclip ejecuta xclip en cada lectura: con 0.1 s el fork/exec
-            # dominaba el uso de CPU en modo ocioso.
+            # pyperclip ejecuta xclip en cada lectura: con un intervalo de 0.1 s
+            # el fork/exec dominaba la CPU en reposo.
             self.stop.wait(_CLIPBOARD_POLL_S)
 
     def run(self) -> None:

@@ -44,7 +44,7 @@ def get_details_url(item_id: int) -> str:
     return f"{DETAILS_URL}{item_id}"
 
 
-# Las dependencias se marcan con esta clase en el HTML de detalle; verificado
+# Las dependencias se marcan con esta clase en el HTML de detalle; se comprobó
 # en vivo que aparece igual en la URL de detalle y en la de descarga corta.
 REQUIRED_PATTERN = re.compile(r'(?<=<li class="required-download-item"><a href=")/downloads/(\d+)')
 
@@ -53,8 +53,8 @@ def fetch_details(item_id: int, http: requests.Session) -> tuple[bool, list[int]
     """Una sola petición al detalle: devuelve (es_vip, dependencias).
 
     La URL de detalle contiene tanto el marcador «VIP Exclusive» como la lista
-    de ``required-download-item``, así que no hace falta una petición extra
-    por comprobación. Propaga el error si TSR no responde bien.
+    de ``required-download-item``, así que no hace falta ninguna petición
+    extra. Propaga el error si TSR no responde bien.
     """
     url = get_details_url(item_id)
     logger.debug(f"[url_parser] fetch_details: GET {url}")

@@ -21,10 +21,9 @@ CONFIG_EXAMPLE_PATH = _ROOT / "config.json.example"
 HISTORY_PATH = _ROOT / "history.json"
 SESSION_PATH = _ROOT / "session.json"
 
-# Cualquier valor de aquí cuenta como "sin configurar": se vuelve a pedir la
-# configuración en vez de intentar iniciar sesión con él. Incluye el vacío
-# (la plantilla llega en blanco) y el ejemplo del README por si alguien lo
-# pega tal cual en config.json.
+# Valores que cuentan como "sin configurar": se vuelve a pedir la
+# configuración en lugar de iniciar sesión con ellos. Cubre el vacío (la
+# plantilla llega en blanco) y el ejemplo del README pegado en config.json.
 _PLACEHOLDERS = {"", "jane.doe@example.com", "MyTsrPassword123!"}
 
 
@@ -70,8 +69,8 @@ class Config:
     history_size: int = 10
     tsr_email: str = ""
     tsr_password: str = ""
-    # False por defecto: Unicode se ve en cualquier terminal; los iconos de
-    # Nerd Font son opt-in para quien tenga una fuente parcheada instalada.
+    # False por defecto: Unicode se ve en cualquier terminal; Nerd Font solo
+    # si el usuario tiene una fuente parcheada instalada.
     use_nerd_icons: bool = False
 
     @classmethod
@@ -93,7 +92,7 @@ class Config:
             ) from e
 
     def needs_setup(self) -> bool:
-        """Indica si faltan credenciales obligatorias."""
+        """Indica si faltan credenciales."""
         return self.tsr_email.strip() in _PLACEHOLDERS or self.tsr_password.strip() in _PLACEHOLDERS
 
     def interactive_setup(self) -> None:

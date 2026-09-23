@@ -95,7 +95,7 @@ class TSRDownloader:
 
     def download(self, dest_dir: Path) -> str:
         """Descarga el archivo mostrando progreso en vivo. Devuelve el nombre del archivo."""
-        progress = display.start_progress(self.item_id)  # spinner sin nombre
+        progress = display.start_progress(self.item_id)  # spinner mientras se resuelve el nombre
 
         if not self.authenticated:
             elapsed = time.time() * 1000 - self.ticket_time

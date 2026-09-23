@@ -23,8 +23,8 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Static
 
 _SPINNERS = ["◜", "◝", "◞", "◟"]
-# (Nerd Font / Font Awesome, Unicode, ASCII). El primer slot solo se usa
-# en modo nerd (use_nerd_icons en config.json).
+# Tres juegos de iconos (Nerd Font / Font Awesome, Unicode, ASCII); el primero
+# solo se usa en modo nerd (use_nerd_icons en config.json).
 _ICON_SETS = {
     "download": ("", "↓", " "),
     "ok": ("", "✓", "✓"),
@@ -50,13 +50,12 @@ _ANSI = {
 }
 _RESET = "\033[0m"
 
-# Símbolo por severidad: la lectura no depende del color (daltonismo,
-# terminales monocromas, capturas de pantalla en blanco y negro).
+# Símbolo por severidad: el mensaje se lee sin depender del color (daltonismo,
+# terminales monocromas o capturas en blanco y negro).
 _LEVEL_SYMBOLS = {"red": "✗", "yellow": "⚠", "green": "✓", "cyan": "•"}
 
 _LOG_LEN = 3
-# Intervalo mínimo entre volcados de barra a la TUI (la barra se actualiza
-# mucho más rápido y cada volcado es un viaje al hilo de la TUI).
+# Intervalo mínimo entre volcados de barra a la TUI; la lógica vive en sync_progress.
 _BAR_SYNC_MIN_INTERVAL = 0.1
 _mode = "unicode"
 _colors = True
@@ -264,7 +263,7 @@ class Progress:
         self.message_text = ""
         self.bar = ""
         self.row: DownloadRow | None = None
-        # Última instantánea para poder anunciar el progreso sin TUI.
+        # Último estado del progreso, para anunciarlo en modo plano.
         self.pct = 0.0
         self.downloaded = 0.0
         self.total = 0.0
@@ -312,7 +311,7 @@ class PlainBackend:
     # -- Mensajes ---------------------------------------------------------
 
     def log_msg(self, text: str, color: str) -> None:
-        # Símbolo por nivel: la severidad se lee sin depender del color.
+        # El símbolo se antepone solo si el llamador no lo puso ya.
         symbol = _LEVEL_SYMBOLS.get(color, "")
         if symbol and not text.lstrip().startswith(symbol):
             text = f"{symbol} {text}"
@@ -424,7 +423,7 @@ class TUIBackend(PlainBackend):
         self._pending_summary: tuple[int, int, str] | None = None
 
     # -- Puente con el hilo de la TUI -------------------------------------
-    # Regla: nunca llamar a _call() mientras se sostiene self._lock; la TUI
+    # Regla: nunca llamar a _call() mientras se mantenga self._lock; la TUI
     # toma ese lock en tick_spinner y se produciría un bloqueo cruzado.
 
     def _call(
@@ -442,7 +441,7 @@ class TUIBackend(PlainBackend):
         try:
             self._app.call_from_thread(method, *args, **kwargs)
         except RuntimeError:
-            # Puede ocurrir durante un cierre muy temprano de la aplicación.
+            # Puede ocurrir durante un cierre prematuro de la aplicación.
             pass
 
     def mounted(self, app: TSRApp) -> None:
@@ -537,7 +536,7 @@ class TUIBackend(PlainBackend):
     # -- Ciclo de vida -----------------------------------------------------
 
     def shutdown(self, success: int, failed: int, last: str) -> None:
-        # Se imprime cuando la TUI ya devolvió el terminal (ver run()).
+        # Se imprime cuando la TUI ya devolvió la terminal (véase run()).
         self._pending_summary = (success, failed, last)
 
     def run(self, worker: Callable[[], None], stop: threading.Event) -> None:
@@ -555,7 +554,7 @@ class TUIBackend(PlainBackend):
         thread = threading.Thread(target=run_worker, name="downloader-worker", daemon=True)
         thread.start()
         self._app.run()
-        # El usuario cerró la TUI: pide la parada y da 2 s para el resumen.
+        # El usuario cerró la TUI: pide la parada y espera 2 s al hilo trabajador.
         stop.set()
         thread.join(timeout=2)
         if self._pending_summary is not None:
@@ -584,7 +583,7 @@ def run(worker: Callable[[], None], stop: threading.Event) -> None:
     global _ui
     _ui.run(worker, stop)
     if isinstance(_ui, TUIBackend):
-        # Tras cerrar la TUI, cualquier mensaje tardío va en modo plano.
+        # Tras cerrar la TUI, cualquier mensaje tardío se imprime en modo plano.
         _ui = PlainBackend()
 
 
@@ -609,7 +608,7 @@ def note(msg: str) -> None:
 
 
 def fatal(msg: str) -> None:
-    """Error para la terminal real, antes de abrir o tras cerrar la TUI."""
+    """Muestra un error en la terminal real, antes de abrir o después de cerrar la TUI."""
     _emit(_paint(msg, "red"))
 
 

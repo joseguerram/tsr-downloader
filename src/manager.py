@@ -1,6 +1,6 @@
 """Gestión de descargas: cola, activos, historial y contadores.
 
-Toda la mutación de estado compartido ocurre tras ``self._lock``; las
+Toda modificación del estado compartido ocurre tras ``self._lock``; las
 llamadas a la interfaz y las escrituras a disco se hacen fuera del lock
 para no bloquear a los demás hilos.
 """
@@ -177,7 +177,7 @@ class DownloadManager:
         self.refresh_status()
 
     def enqueue_items(self, item_id: int, requirements: list[int]) -> None:
-        """Encola item y dependencias. Recopila bajo el lock, lanza fuera."""
+        """Encola item y dependencias: decide bajo el lock y lanza fuera de él."""
         to_start: list[int] = []
         queued: list[tuple[int, int]] = []
         with self._lock:
@@ -262,8 +262,8 @@ class DownloadManager:
                 )
                 return
 
-            # Crear la fila inmediatamente. Las comprobaciones de VIP y
-            # dependencias pueden tardar; el usuario debe ver el item desde ya.
+            # Se crea la fila ya: las comprobaciones de VIP y dependencias
+            # pueden tardar y el usuario debe ver el item desde el primer momento.
             display.start_progress(
                 item_id,
                 f"{display.icon('download')} Item #{item_id}",

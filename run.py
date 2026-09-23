@@ -54,8 +54,8 @@ def setup() -> None:
     else:
         print("    -> config.json ya existe, sin cambios")
 
-    # Pide credenciales si faltan o siguen siendo placeholders.
-    # SystemExit(1) desde interactive_setup se propaga con su código de salida.
+    # Pide credenciales si siguen vacías o con valores de ejemplo.
+    # Un SystemExit(1) de interactive_setup se propaga con su código de salida.
     try:
         config = Config.load()
     except ConfigError as e:

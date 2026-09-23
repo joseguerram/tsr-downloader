@@ -27,7 +27,7 @@ class _FakeExecutor:
 
 
 def _make_manager(monkeypatch: pytest.MonkeyPatch) -> DownloadManager:
-    # Que el test nunca reescriba el history.json real del proyecto.
+    # Evita que el test reescriba el history.json real del proyecto.
     monkeypatch.setattr(manager_mod, "save_history", lambda history: None)
     mgr = DownloadManager(Config(), TSRSession())
     mgr.executor = _FakeExecutor()  # type: ignore[assignment]

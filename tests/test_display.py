@@ -116,7 +116,7 @@ def test_tui_bar_sync_throttles_bursts(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[object] = []
     monkeypatch.setattr(backend, "_call", lambda fn, *a, **k: calls.append(fn))
 
-    # Volcada hace un instante: el siguiente update se suprime.
+    # Se volcó hace un instante: la siguiente actualización se suprime.
     progress._last_sync = time.monotonic()
     progress.update(50, 5, 10, 100.0, 5.0)
     assert calls == []

@@ -2,7 +2,7 @@
     "download_directory": "./downloads",
     "max_concurrent": 5,
     "history_size": 10,
-    "tsr_email": "tu_correo",
-    "tsr_password": "tu_contraseña",
-    "use_nerd_icons": true
+    "tsr_email": "",
+    "tsr_password": "",
+    "use_nerd_icons": false
 }

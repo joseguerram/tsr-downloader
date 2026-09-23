@@ -568,7 +568,7 @@ class TUIBackend(PlainBackend):
 _ui: PlainBackend = PlainBackend()
 
 
-def init(nerd_requested: bool = True) -> None:
+def init(nerd_requested: bool = False) -> None:
     """Elige el backend y el juego de iconos según la terminal."""
     global _ui, _colors, _mode
     # NO_COLOR (no-color.org) o TERM=dumb: modo plano y sin ANSI.

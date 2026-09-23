@@ -21,7 +21,11 @@ CONFIG_EXAMPLE_PATH = _ROOT / "config.json.example"
 HISTORY_PATH = _ROOT / "history.json"
 SESSION_PATH = _ROOT / "session.json"
 
-_PLACEHOLDERS = {"tu_correo", "tu_contraseña", "tu_email", ""}
+# Cualquier valor de aquí cuenta como "sin configurar": se vuelve a pedir la
+# configuración en vez de intentar iniciar sesión con él. Incluye el vacío
+# (la plantilla llega en blanco) y el ejemplo del README por si alguien lo
+# pega tal cual en config.json.
+_PLACEHOLDERS = {"", "jane.doe@example.com", "MyTsrPassword123!"}
 
 
 class HistoryEntry(TypedDict):
@@ -66,7 +70,9 @@ class Config:
     history_size: int = 10
     tsr_email: str = ""
     tsr_password: str = ""
-    use_nerd_icons: bool = True
+    # False por defecto: Unicode se ve en cualquier terminal; los iconos de
+    # Nerd Font son opt-in para quien tenga una fuente parcheada instalada.
+    use_nerd_icons: bool = False
 
     @classmethod
     def load(cls) -> Config:

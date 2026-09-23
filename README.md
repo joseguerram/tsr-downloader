@@ -1,5 +1,8 @@
 # TSR Downloader
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+
 Descarga contenido de The Sims Resource copiando enlaces. La aplicación supervisa tu portapapeles y descarga automáticamente en segundo plano.
 
 ## Características
@@ -129,6 +132,20 @@ tsr-downloader/
 ```
 
 > `config.json`, `session.json`, `history.json` y `logs.log` se generan en la raíz y no se suben a Git.
+
+## Créditos y licencia
+
+Basado en [The-Sims-Resource-Downloader](https://github.com/Xientraa/The-Sims-Resource-Downloader)
+de **Xientraa**, publicado bajo licencia MIT — `Copyright (c) 2023 Xientraa`.
+De ahí proceden el flujo de descarga por ticket y la detección de dependencias;
+el resto (inicio de sesión GraphQL, TUI, cola con reintentos y tests) es original
+de este repositorio.
+
+Este proyecto está bajo la [licencia MIT](LICENSE) — `Copyright (c) 2026 joseguerram`.
+
+**Aviso:** no estoy afiliado a Electronic Arts, Maxis ni The Sims Resource. Esta
+herramienta es un proyecto personal no oficial; úsala bajo tu propia
+responsabilidad y respeta los términos de servicio de TSR.
 
 ## Desarrollo
 

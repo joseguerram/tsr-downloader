@@ -1,6 +1,7 @@
 """Tests de tolerancia a archivos de estado corruptos."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,30 @@ def test_load_session_corrupt_backs_up(tmp_path: Path, monkeypatch: pytest.Monke
 
     assert load_session() is None
     assert (tmp_path / "session.json.bak").exists()
+
+
+def test_example_credentials_are_treated_as_placeholders() -> None:
+    """La plantilla en blanco debe seguir pidiendo credenciales.
+
+    Si "" sale de _PLACEHOLDERS, la plantilla parecería "ya configurada".
+    """
+    example = json.loads(config_mod.CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8"))
+    cfg = Config(**example)
+    assert cfg.needs_setup()
+
+
+def test_readme_example_credentials_are_placeholders() -> None:
+    """El ejemplo del README, si se pega tal cual, también pide credenciales.
+
+    Si alguien cambia el ejemplo del README sin añadir los valores a
+    _PLACEHOLDERS, la app intentaría iniciar sesión con ellos en vez de
+    pedir los reales.
+    """
+    readme = (config_mod.CONFIG_EXAMPLE_PATH.parent / "README.md").read_text(encoding="utf-8")
+    match = re.search(r'"tsr_email":\s*"([^"]*)"\s*,\s*"tsr_password":\s*"([^"]*)"', readme)
+    assert match, "falta el bloque de ejemplo de config.json en README.md"
+    cfg = Config(tsr_email=match.group(1), tsr_password=match.group(2))
+    assert cfg.needs_setup()
 
 
 def test_interactive_setup_masks_password(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

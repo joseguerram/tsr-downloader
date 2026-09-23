@@ -3,13 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-Descarga contenido de The Sims Resource copiando enlaces. La aplicación supervisa tu portapapeles y descarga automáticamente en segundo plano.
+Descarga contenido de The Sims Resource copiando enlaces. La aplicación vigila tu portapapeles y descarga los enlaces en segundo plano.
 
 ## Características
 
 - **Descarga por portapapeles** — copia un enlace y se descarga solo.
 - **Inicio de sesión automático** — sin captcha, sin esperas de 15 segundos.
-- **Cinco descargas simultáneas** — descarga varios archivos a la vez.
+- **Descargas simultáneas** — hasta cinco archivos a la vez.
 - **Historial** — guarda las diez últimas descargas.
 - **Reanudación** — retoma las descargas interrumpidas desde donde quedaron.
 - **Dependencias** — descarga automáticamente los archivos requeridos.
@@ -19,16 +19,16 @@ Descarga contenido de The Sims Resource copiando enlaces. La aplicación supervi
 - **Python 3.10 o superior**.
 - Cuenta gratuita en The Sims Resource.
 
-## Instalación y uso
+## Instalación
 
-La entrada universal es `run.py` — funciona en Linux, macOS y Windows, solo con Python:
+El punto de entrada universal es `run.py` — funciona en Linux, macOS y Windows, solo con Python:
 
 ```sh
 python run.py setup    # crea .venv, instala dependencias y genera config.json si falta
-python run.py          # ejecuta la aplicación (hace setup automático si falta todo)
+python run.py          # ejecuta la aplicación (prepara el entorno si falta)
 ```
 
-`python run.py` basta en una máquina nueva: se autoprepara la primera vez. Otros comandos:
+En una máquina nueva basta con `python run.py`: se prepara automáticamente la primera vez. Otros comandos:
 
 ```sh
 python run.py run      # igual que 'python run.py'
@@ -72,13 +72,13 @@ Luego edita `config.json` (en la raíz del proyecto):
 | `download_directory` | string | `./downloads` | Carpeta donde se guardan las descargas. |
 | `max_concurrent` | integer | `5` | Máximo de descargas en paralelo. |
 | `history_size` | integer | `10` | Cuántas descargas se guardan en el historial. |
-| `tsr_email` | string | *(vacío)* | Email de tu cuenta en The Sims Resource (obligatorio). |
+| `tsr_email` | string | *(vacío)* | Email de tu cuenta en TSR (obligatorio). |
 | `tsr_password` | string | *(vacío)* | Contraseña de tu cuenta en TSR (obligatoria). |
 | `use_nerd_icons` | boolean | `false` | `true`: iconos de Nerd Font (instala antes una fuente parcheada, p. ej. JetBrainsMono Nerd Font); `false`: símbolos Unicode estándar (↓, ✓, ✗), que se ven bien en cualquier terminal. |
 
 **Importante:** la plantilla `config.json.example` llega con `tsr_email` y `tsr_password` **vacíos** — sustitúyelos por los de tu cuenta TSR (o deja que `python run.py setup` te los pida al arrancar). La aplicación no funciona sin credenciales. Si pegas el ejemplo de arriba tal cual, también volverá a pedírtelas: los valores de ejemplo jamás se usan para iniciar sesión.
 
-**Tus credenciales no salen de tu equipo:** `config.json` es un fichero **local** en tu disco; no hay servidores de esta aplicación, telemetría ni analítica. Git lo ignora (está en `.gitignore`), así que **nunca se sube a GitHub** — solo se publica la plantilla `config.json.example`, sin credenciales reales. Lo mismo aplica a `session.json`, `history.json` y `logs.log`. El único destino de tu email y contraseña en la red son los servidores de TSR, cuando la app inicia sesión (lo mismo que harías tú desde el navegador).
+**Tus credenciales no salen de tu equipo:** `config.json` es un fichero **local** en tu disco; no hay servidores de esta aplicación, telemetría ni analítica. Git lo ignora (está en `.gitignore`), así que **nunca se sube a GitHub** — solo se publica la plantilla `config.json.example`, sin credenciales reales. Lo mismo aplica a `session.json`, `history.json` y `logs.log`. El único destino de tu email y contraseña en la red son los servidores de TSR, cuando la aplicación inicia sesión (lo mismo que harías tú desde el navegador).
 
 ## Uso
 
@@ -89,13 +89,13 @@ Luego edita `config.json` (en la raíz del proyecto):
 
 Se guardan en la carpeta configurada (por defecto, `./downloads/`).
 
-Si una descarga falla, se reintenta automáticamente a los 30 s (hasta 3 intentos).
+Si una descarga falla, se reintenta automáticamente a los 30 segundos (hasta 3 intentos).
 
 ## Interfaz
 
 La aplicación usa una interfaz TUI basada en Textual con tema cyberpunk:
 
-- **TSR Downloader** en magenta/rosado en la primera línea.
+- **TSR Downloader** en magenta o rosa en la primera línea.
 - Contadores en cian sobre fondo azul oscuro.
 - Cada descarga ocupa una fila permanente con barra de progreso en cian.
 - Spinners animados durante la descarga.
@@ -112,7 +112,7 @@ La aplicación usa una interfaz TUI basada en Textual con tema cyberpunk:
 Al cerrar se muestra un resumen con el número de descargas completadas y fallidas.
 La cola pendiente se cancela al salir; las descargas en curso terminan solas.
 
-Si la salida no es una terminal, o defines `NO_COLOR=1` (también `TERM=dumb`), se usa el modo plano: sin colores ANSI y con el progreso anunciado en texto cada 25 %.
+Si la salida no es una terminal o defines `NO_COLOR=1` (también `TERM=dumb`), se usa el modo plano: sin colores ANSI y con el progreso anunciado en texto cada 25 %.
 
 ## Estructura del proyecto
 
@@ -127,14 +127,20 @@ tsr-downloader/
 │   ├── config.py        ← Configuración y persistencia (config/historial/sesión)
 │   ├── exceptions.py    ← Excepciones de dominio
 │   └── display.py       ← Backends de UI: TUI (Textual) y modo plano
-├── tests/
-│   ├── test_url_parser.py
-│   └── test_display.py
+├── tests/                ← 7 ficheros · 50 tests
+│   ├── test_clipboard.py
+│   ├── test_config.py
+│   ├── test_display.py
+│   ├── test_downloader.py
+│   ├── test_manager.py
+│   ├── test_session.py
+│   └── test_url_parser.py
 ├── run.py               ← Entrada universal: setup, run, clean, help
 ├── pyproject.toml       ← Configuración de ruff, mypy y pytest
 ├── requirements.txt     ← Dependencias de ejecución
 ├── requirements-dev.txt ← Herramientas de desarrollo
 ├── config.json.example  ← Plantilla de configuración (se sube a Git)
+├── LICENSE              ← Licencia MIT
 ├── .gitignore
 ├── .venv/
 └── README.md
